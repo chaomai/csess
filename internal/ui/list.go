@@ -27,17 +27,19 @@ type List struct {
 	width, height int
 	allMode       bool
 	items         []session.Meta
+	idIndex       map[string]int // ID -> items[index] for O(1) enrich updates
 	cursor        int
 	firstVisible  int
 }
 
 func NewList(width, height int, allMode bool) *List {
-	return &List{width: width, height: height, allMode: allMode}
+	return &List{width: width, height: height, allMode: allMode, idIndex: map[string]int{}}
 }
 
 func (l *List) SetItems(items []session.Meta) {
 	l.items = items
 	l.resort()
+	l.rebuildIndex()
 	if l.cursor >= len(l.items) {
 		l.cursor = maxInt(0, len(l.items)-1)
 	}
@@ -45,13 +47,20 @@ func (l *List) SetItems(items []session.Meta) {
 	l.ensureVisible()
 }
 
-func (l *List) ReplaceItem(m session.Meta) {
+func (l *List) rebuildIndex() {
+	l.idIndex = make(map[string]int, len(l.items))
 	for i, it := range l.items {
-		if it.ID == m.ID {
-			l.items[i] = m
-			l.resort()
-			return
-		}
+		l.idIndex[it.ID] = i
+	}
+}
+
+// ReplaceItem updates the Meta for the given ID in place. It does NOT
+// re-sort the list: initial ModTime order is a close-enough stand-in for
+// UpdatedAt order, and re-sorting on every enrich message (which arrive
+// per-session at O(n)) would choke the Update loop.
+func (l *List) ReplaceItem(m session.Meta) {
+	if i, ok := l.idIndex[m.ID]; ok && i < len(l.items) {
+		l.items[i] = m
 	}
 }
 

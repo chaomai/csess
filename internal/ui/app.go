@@ -87,6 +87,7 @@ type App struct {
 	search    *SearchBar
 	confirm   *Confirm
 	allItems  []session.Meta
+	allIndex  map[string]int // ID -> allItems[index] for O(1) enrich updates
 	banner    string
 	bannerExp time.Time
 
@@ -131,16 +132,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ScanMsg:
 		a.allItems = m.Metas
+		a.allIndex = make(map[string]int, len(m.Metas))
+		for i, it := range m.Metas {
+			a.allIndex[it.ID] = i
+		}
 		a.list.SetItems(m.Metas)
 		a.updatePreviewFromSelection()
 		return a, a.loadTranscriptForSelection()
 
 	case EnrichMsg:
-		// Update allItems too so search still works.
-		for i, it := range a.allItems {
-			if it.ID == m.Meta.ID {
-				a.allItems[i] = m.Meta
-			}
+		// O(1) update via index; search operates on allItems so we keep
+		// it in sync too.
+		if i, ok := a.allIndex[m.Meta.ID]; ok && i < len(a.allItems) {
+			a.allItems[i] = m.Meta
 		}
 		a.list.ReplaceItem(m.Meta)
 		if sel, ok := a.list.Selected(); ok && sel.ID == m.Meta.ID {
@@ -194,6 +198,10 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		a.allItems = keep
+		delete(a.allIndex, m.ID)
+		for i, it := range keep {
+			a.allIndex[it.ID] = i
+		}
 		a.applyFilter()
 		a.updatePreviewFromSelection()
 		a.banner = "deleted " + m.ID
