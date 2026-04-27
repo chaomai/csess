@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"csess/internal/session"
 )
@@ -140,7 +141,13 @@ func (p *Preview) renderTurn(t session.Turn) string {
 	default:
 		head = t.Role
 	}
-	return head + "\n" + unescapeLiterals(t.Text)
+	body := unescapeLiterals(t.Text)
+	if p.width > 0 {
+		// Wrap each line to pane width so long paragraphs (and CJK) don't
+		// bleed into the list pane on the left.
+		body = ansi.Wordwrap(body, p.width, " ,.-、。，")
+	}
+	return head + "\n" + body
 }
 
 // unescapeLiterals expands literal "\n", "\t", "\r" escape sequences
