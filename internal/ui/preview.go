@@ -68,6 +68,16 @@ func (p *Preview) AddTurn(t session.Turn) {
 	p.reflow()
 }
 
+// AddTurns appends many turns and reflows once. Use for batched delivery
+// (e.g. BatchTurnsMsg) to avoid O(n^2) reflow cost on large sessions.
+func (p *Preview) AddTurns(ts []session.Turn) {
+	if len(ts) == 0 {
+		return
+	}
+	p.turns = append(p.turns, ts...)
+	p.reflow()
+}
+
 func (p *Preview) ToggleExpanded() {
 	p.expanded = !p.expanded
 	p.reflow()

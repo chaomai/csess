@@ -163,9 +163,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Seq != a.transcriptSeq {
 			return a, nil
 		}
-		for _, t := range m.Turns {
-			a.preview.AddTurn(t)
-		}
+		a.preview.AddTurns(m.Turns)
 		return a, nil
 
 	case BannerMsg:
