@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -80,10 +81,11 @@ func main() {
 		DISPLAY: os.Getenv("DISPLAY"),
 	}, os.Stderr)
 
+	var pendingResume *session.Meta
 	cfg := ui.AppConfig{
 		Width: 120, Height: 40, AllMode: allMode, Scope: scope,
 		LoadTranscript: buildLoadTranscript(fsys),
-		ResumeSelected: buildResume(),
+		ResumeSelected: buildResume(&pendingResume),
 		CopySelected:   buildCopy(clip),
 		TrashSelected:  buildTrash(*trashDir),
 	}
@@ -97,6 +99,14 @@ func main() {
 
 	if _, err := p.Run(); err != nil {
 		fatal("tui: %v", err)
+	}
+
+	// After the TUI exits, replace this process with `claude --resume`
+	// if the user chose a session. Using syscall.Exec so the shell sees
+	// claude as the current foreground process — quitting claude returns
+	// the user to the shell, not to csess.
+	if pendingResume != nil {
+		execClaude(*pendingResume)
 	}
 }
 
@@ -152,17 +162,40 @@ func buildLoadTranscript(fsys fs.FS) func(seq int, m session.Meta, ctx context.C
 	}
 }
 
-func buildResume() func(m session.Meta) tea.Cmd {
+func buildResume(out **session.Meta) func(m session.Meta) tea.Cmd {
 	return func(m session.Meta) tea.Cmd {
 		if _, err := exec.LookPath("claude"); err != nil {
 			return func() tea.Msg {
 				return ui.BannerMsg{Text: "claude not in PATH", IsError: true, Until: time.Now().Add(5 * time.Second)}
 			}
 		}
-		cmd := action.BuildResumeCmd(m.CWD, m.ID)
-		return tea.ExecProcess(cmd, func(err error) tea.Msg {
-			return ui.ResumeDoneMsg{Err: err}
-		})
+		return func() tea.Msg {
+			mc := m
+			*out = &mc
+			return tea.Quit()
+		}
+	}
+}
+
+// execClaude replaces the current process image with `claude --resume`
+// rooted at the session's original working directory. On success this
+// never returns; on failure it prints to stderr and exits non-zero.
+func execClaude(m session.Meta) {
+	claudePath, err := exec.LookPath("claude")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "claude not in PATH: %v\n", err)
+		os.Exit(1)
+	}
+	if m.CWD != "" {
+		if err := os.Chdir(m.CWD); err != nil {
+			fmt.Fprintf(os.Stderr, "cd %s: %v\n", m.CWD, err)
+			os.Exit(1)
+		}
+	}
+	args := []string{"claude", "--resume", m.ID}
+	if err := syscall.Exec(claudePath, args, os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "exec claude: %v\n", err)
+		os.Exit(1)
 	}
 }
 
