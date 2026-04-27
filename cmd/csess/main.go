@@ -1,7 +1,187 @@
 package main
 
-import "fmt"
+import (
+	"context"
+	"flag"
+	"fmt"
+	"io/fs"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+
+	"csess/internal/action"
+	"csess/internal/session"
+	"csess/internal/ui"
+)
 
 func main() {
-	fmt.Println("csess: not yet implemented")
+	var (
+		allFlag     = flag.Bool("all", false, "browse sessions across all projects")
+		projectsDir = flag.String("projects-dir", "", "override ~/.claude/projects")
+		trashDir    = flag.String("trash-dir", "", "override ~/.claude/.trash")
+	)
+	flag.Parse()
+
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fatal("home dir: %v", err)
+	}
+	if *projectsDir == "" {
+		*projectsDir = filepath.Join(home, ".claude", "projects")
+	}
+	if *trashDir == "" {
+		*trashDir = filepath.Join(home, ".claude", ".trash")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		fatal("cwd: %v", err)
+	}
+
+	scope := cwd
+	if *allFlag {
+		scope = "*"
+	}
+
+	// The scanner needs an fs.FS rooted at projectsDir's parent, with
+	// "projects" as the root subpath. os.DirFS gives us that easily.
+	parent, leaf := filepath.Split(*projectsDir)
+	parent = filepath.Clean(parent)
+	leaf = filepath.Clean(leaf)
+	fsys := os.DirFS(parent)
+	if _, err := fs.Stat(fsys, leaf); err != nil {
+		fmt.Fprintf(os.Stderr, "no sessions found at %s\n", *projectsDir)
+		os.Exit(0)
+	}
+	scanner := session.NewScanner(fsys, leaf)
+
+	metas, err := scanner.Quick(scope)
+	if err != nil {
+		fatal("scan: %v", err)
+	}
+	if len(metas) == 0 && !*allFlag {
+		fmt.Fprintf(os.Stderr, "no sessions for %s. try --all\n", cwd)
+		os.Exit(0)
+	}
+
+	clip := action.NewClipboard(action.ClipEnv{
+		GOOS:    runtime.GOOS,
+		TMUX:    os.Getenv("TMUX"),
+		WAYLAND: os.Getenv("WAYLAND_DISPLAY"),
+		DISPLAY: os.Getenv("DISPLAY"),
+	}, os.Stderr)
+
+	cfg := ui.AppConfig{
+		Width: 120, Height: 40, AllMode: *allFlag, Scope: scope,
+		LoadTranscript: buildLoadTranscript(fsys),
+		ResumeSelected: buildResume(),
+		CopySelected:   buildCopy(clip),
+		TrashSelected:  buildTrash(*trashDir),
+	}
+	app := ui.NewApp(cfg)
+
+	p := tea.NewProgram(app, tea.WithAltScreen())
+	// Send the initial scan synthetically.
+	go p.Send(ui.ScanMsg{Metas: metas})
+	// Bridge enrich messages into the program.
+	go bridgeEnrich(p, scanner, metas)
+
+	if _, err := p.Run(); err != nil {
+		fatal("tui: %v", err)
+	}
+}
+
+// bridgeEnrich runs Scanner.EnrichAll and forwards each EnrichMsg to the
+// tea.Program via p.Send.
+func bridgeEnrich(p *tea.Program, s *session.Scanner, metas []session.Meta) {
+	ch := make(chan session.Meta, 16)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		_ = s.EnrichAll(ctx, metas, ch)
+		close(done)
+	}()
+
+	for {
+		select {
+		case m, ok := <-ch:
+			if !ok {
+				return
+			}
+			p.Send(ui.EnrichMsg{Meta: m})
+		case <-done:
+			// Drain remaining.
+			for {
+				select {
+				case m := <-ch:
+					p.Send(ui.EnrichMsg{Meta: m})
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func buildLoadTranscript(fsys fs.FS) func(seq int, m session.Meta, ctx context.Context) tea.Cmd {
+	return func(seq int, m session.Meta, ctx context.Context) tea.Cmd {
+		return func() tea.Msg {
+			ch := make(chan session.Turn, 64)
+			go func() {
+				defer close(ch)
+				_ = session.StreamTurns(ctx, fsys, m.Path, ch)
+			}()
+			// Blocking drain: return all turns as a batched message.
+			var turns []session.Turn
+			for t := range ch {
+				turns = append(turns, t)
+			}
+			return ui.BatchTurnsMsg{Seq: seq, Turns: turns}
+		}
+	}
+}
+
+func buildResume() func(m session.Meta) tea.Cmd {
+	return func(m session.Meta) tea.Cmd {
+		if _, err := exec.LookPath("claude"); err != nil {
+			return func() tea.Msg {
+				return ui.BannerMsg{Text: "claude not in PATH", IsError: true, Until: time.Now().Add(5 * time.Second)}
+			}
+		}
+		cmd := action.BuildResumeCmd(m.CWD, m.ID)
+		return tea.ExecProcess(cmd, func(err error) tea.Msg {
+			return ui.ResumeDoneMsg{Err: err}
+		})
+	}
+}
+
+func buildCopy(c *action.Clipboard) func(m session.Meta) tea.Cmd {
+	return func(m session.Meta) tea.Cmd {
+		return func() tea.Msg {
+			if err := c.Copy(m.ID); err != nil {
+				return ui.BannerMsg{Text: "copy failed: " + err.Error(), IsError: true}
+			}
+			return ui.BannerMsg{Text: "copied " + m.ID}
+		}
+	}
+}
+
+func buildTrash(trashDir string) func(m session.Meta) tea.Cmd {
+	return func(m session.Meta) tea.Cmd {
+		return func() tea.Msg {
+			_, err := action.Trash(trashDir, m.Path, time.Now())
+			return ui.DeleteDoneMsg{ID: m.ID, Err: err}
+		}
+	}
+}
+
+func fatal(f string, args ...any) {
+	fmt.Fprintf(os.Stderr, f+"\n", args...)
+	os.Exit(1)
 }
