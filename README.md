@@ -13,8 +13,8 @@ go install ./cmd/csess
 ## Use
 
 ```bash
-csess           # list sessions for the current directory
-csess --all     # list sessions across every project
+csess           # list sessions across all projects
+csess --here    # limit to the current directory
 ```
 
 ### Keys

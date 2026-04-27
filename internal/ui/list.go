@@ -26,6 +26,7 @@ type List struct {
 	allMode       bool
 	items         []session.Meta
 	cursor        int
+	firstVisible  int
 }
 
 func NewList(width, height int, allMode bool) *List {
@@ -38,6 +39,8 @@ func (l *List) SetItems(items []session.Meta) {
 	if l.cursor >= len(l.items) {
 		l.cursor = maxInt(0, len(l.items)-1)
 	}
+	l.firstVisible = 0
+	l.ensureVisible()
 }
 
 func (l *List) ReplaceItem(m session.Meta) {
@@ -73,7 +76,10 @@ func sortTime(m session.Meta) time.Time {
 	return m.ModTime
 }
 
-func (l *List) SetSize(w, h int) { l.width, l.height = w, h }
+func (l *List) SetSize(w, h int) {
+	l.width, l.height = w, h
+	l.ensureVisible()
+}
 
 // Update handles j/k movement only; parent forwards only relevant keys.
 func (l *List) Update(msg tea.Msg) (*List, tea.Cmd) {
@@ -92,6 +98,7 @@ func (l *List) Update(msg tea.Msg) (*List, tea.Cmd) {
 		case "G", "end":
 			l.cursor = len(l.items) - 1
 		}
+		l.ensureVisible()
 	}
 	return l, nil
 }
@@ -100,15 +107,25 @@ func (l *List) View() string {
 	if len(l.items) == 0 {
 		return listDimStyle.Render("no sessions")
 	}
+	height := l.height
+	if height <= 0 {
+		height = 1
+	}
+	end := min(l.firstVisible+height, len(l.items))
+	visible := l.items[l.firstVisible:end]
+
 	var b strings.Builder
-	for i, it := range l.items {
+	for i, it := range visible {
+		globalIdx := l.firstVisible + i
 		row := l.row(it)
-		if i == l.cursor {
+		if globalIdx == l.cursor {
 			b.WriteString(listCursorStyle.Render("▶ " + row))
 		} else {
 			b.WriteString("  " + row)
 		}
-		b.WriteByte('\n')
+		if i < len(visible)-1 {
+			b.WriteByte('\n')
+		}
 	}
 	return b.String()
 }
@@ -155,4 +172,36 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// ensureVisible adjusts firstVisible so cursor stays within the visible window.
+func (l *List) ensureVisible() {
+	height := l.height
+	if height <= 0 {
+		height = 1
+	}
+	if l.cursor < l.firstVisible {
+		l.firstVisible = l.cursor
+	}
+	if l.cursor >= l.firstVisible+height {
+		l.firstVisible = l.cursor - height + 1
+	}
+	// Clamp firstVisible to valid range.
+	if l.firstVisible < 0 {
+		l.firstVisible = 0
+	}
+	maxFirst := len(l.items) - height
+	if maxFirst < 0 {
+		maxFirst = 0
+	}
+	if l.firstVisible > maxFirst {
+		l.firstVisible = maxFirst
+	}
 }

@@ -20,7 +20,7 @@ import (
 
 func main() {
 	var (
-		allFlag     = flag.Bool("all", false, "browse sessions across all projects")
+		hereFlag    = flag.Bool("here", false, "only show sessions for the current directory (default: all projects)")
 		projectsDir = flag.String("projects-dir", "", "override ~/.claude/projects")
 		trashDir    = flag.String("trash-dir", "", "override ~/.claude/.trash")
 	)
@@ -42,9 +42,10 @@ func main() {
 		fatal("cwd: %v", err)
 	}
 
-	scope := cwd
-	if *allFlag {
-		scope = "*"
+	allMode := !*hereFlag
+	scope := "*"
+	if *hereFlag {
+		scope = cwd
 	}
 
 	// The scanner needs an fs.FS rooted at projectsDir's parent, with
@@ -63,8 +64,12 @@ func main() {
 	if err != nil {
 		fatal("scan: %v", err)
 	}
-	if len(metas) == 0 && !*allFlag {
-		fmt.Fprintf(os.Stderr, "no sessions for %s. try --all\n", cwd)
+	if len(metas) == 0 {
+		if *hereFlag {
+			fmt.Fprintf(os.Stderr, "no sessions for %s. drop --here to see all projects\n", cwd)
+		} else {
+			fmt.Fprintf(os.Stderr, "no sessions found at %s\n", *projectsDir)
+		}
 		os.Exit(0)
 	}
 
@@ -76,7 +81,7 @@ func main() {
 	}, os.Stderr)
 
 	cfg := ui.AppConfig{
-		Width: 120, Height: 40, AllMode: *allFlag, Scope: scope,
+		Width: 120, Height: 40, AllMode: allMode, Scope: scope,
 		LoadTranscript: buildLoadTranscript(fsys),
 		ResumeSelected: buildResume(),
 		CopySelected:   buildCopy(clip),

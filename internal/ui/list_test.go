@@ -1,9 +1,12 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"csess/internal/session"
 )
@@ -42,5 +45,46 @@ func TestList_AllModeShowsProjectColumn(t *testing.T) {
 	})
 	if !strings.Contains(m.View(), "proj-one") {
 		t.Errorf("missing project column: %s", m.View())
+	}
+}
+
+func TestList_WindowsToHeight(t *testing.T) {
+	items := make([]session.Meta, 100)
+	for i := range items {
+		items[i] = session.Meta{ID: fmt.Sprintf("s%03d", i), FirstPrompt: "p", Enriched: true}
+	}
+	m := NewList(80, 5, false) // height=5
+	m.SetItems(items)
+	v := m.View()
+	lines := strings.Count(v, "\n") + 1
+	if lines > 5 {
+		t.Errorf("View has %d lines; want <= 5", lines)
+	}
+	// Cursor at top; s000..s004 visible, s005 not
+	if !strings.Contains(v, "s000") {
+		t.Error("top item missing")
+	}
+	if strings.Contains(v, "s099") {
+		t.Error("bottom item should not be visible with cursor at top")
+	}
+}
+
+func TestList_CursorScrollsWindow(t *testing.T) {
+	items := make([]session.Meta, 20)
+	for i := range items {
+		items[i] = session.Meta{ID: fmt.Sprintf("s%02d", i), Enriched: true}
+	}
+	m := NewList(80, 3, false)
+	m.SetItems(items)
+	// Move cursor down 10 times
+	for i := 0; i < 10; i++ {
+		m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	}
+	v := m.View()
+	if !strings.Contains(v, "s10") {
+		t.Errorf("cursor pos not visible after 10 j presses: %q", v)
+	}
+	if strings.Contains(v, "s00") {
+		t.Errorf("first item should have scrolled off: %q", v)
 	}
 }
