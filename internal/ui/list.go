@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"csess/internal/session"
 )
@@ -115,9 +116,13 @@ func (l *List) View() string {
 	visible := l.items[l.firstVisible:end]
 
 	var b strings.Builder
+	rowWidth := l.width - 2 // account for "▶ " or "  " prefix
+	if rowWidth < 10 {
+		rowWidth = 10
+	}
 	for i, it := range visible {
 		globalIdx := l.firstVisible + i
-		row := l.row(it)
+		row := ansi.Truncate(l.row(it), rowWidth, "…")
 		if globalIdx == l.cursor {
 			b.WriteString(listCursorStyle.Render("▶ " + row))
 		} else {
@@ -136,7 +141,7 @@ func (l *List) row(m session.Meta) string {
 	if len(id) > 8 {
 		id = id[:8]
 	}
-	prompt := m.FirstPrompt
+	prompt := flattenPrompt(m.FirstPrompt)
 	if prompt == "" {
 		prompt = listDimStyle.Render("(not loaded)")
 	}
@@ -145,9 +150,38 @@ func (l *List) row(m session.Meta) string {
 		if m.CWD != "" {
 			proj = filepath.Base(m.CWD)
 		}
-		return fmt.Sprintf("%s  %s  %-12s  %s", tRel, id, proj, prompt)
+		if len(proj) > 14 {
+			proj = proj[:13] + "…"
+		}
+		return fmt.Sprintf("%3s  %-8s  %-14s  %s", tRel, id, proj, prompt)
 	}
-	return fmt.Sprintf("%s  %s  %s", tRel, id, prompt)
+	return fmt.Sprintf("%3s  %-8s  %s", tRel, id, prompt)
+}
+
+// flattenPrompt collapses newlines and whitespace so a multi-line prompt
+// fits one row. Leading/trailing whitespace is trimmed.
+func flattenPrompt(s string) string {
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	prevSpace := false
+	for _, r := range s {
+		if r == '\n' || r == '\r' || r == '\t' {
+			r = ' '
+		}
+		if r == ' ' {
+			if prevSpace || b.Len() == 0 {
+				continue
+			}
+			prevSpace = true
+		} else {
+			prevSpace = false
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimRight(b.String(), " ")
 }
 
 func humanDelta(t time.Time) string {
