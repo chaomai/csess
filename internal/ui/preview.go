@@ -52,6 +52,14 @@ func (p *Preview) SetMeta(m session.Meta) {
 	p.vp.GotoTop()
 }
 
+// UpdateMeta refreshes the header fields for the currently displayed
+// session without clearing already-streamed turns. Use when an
+// enrichment update arrives for the selected session.
+func (p *Preview) UpdateMeta(m session.Meta) {
+	p.meta = m
+	p.reflow()
+}
+
 func (p *Preview) AddTurn(t session.Turn) {
 	p.turns = append(p.turns, t)
 	p.reflow()

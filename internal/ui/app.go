@@ -144,7 +144,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.list.ReplaceItem(m.Meta)
 		if sel, ok := a.list.Selected(); ok && sel.ID == m.Meta.ID {
-			a.preview.SetMeta(m.Meta)
+			a.preview.UpdateMeta(m.Meta)
 		}
 		return a, nil
 
