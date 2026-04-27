@@ -1,0 +1,10 @@
+/csess
+/dist/
+*.test
+*.out
+.DS_Store
+
+# Un-ignore files that global gitignore (~/.gitignore) blocks via CMake/Fortran patterns
+!go.mod
+!go.sum
+!Makefile
