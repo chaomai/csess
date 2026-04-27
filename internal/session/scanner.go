@@ -1,11 +1,14 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // Scanner reads session metadata from a Claude projects directory.
@@ -74,4 +77,69 @@ func (s *Scanner) Quick(scope string) ([]Meta, error) {
 		return out[i].ModTime.After(out[j].ModTime)
 	})
 	return out, nil
+}
+
+const defaultWorkers = 8
+
+// EnrichAll concurrently fills ExtractMeta fields for each meta and sends
+// each completed Meta on ch. It returns when all metas have been attempted
+// or ctx is cancelled. It does not close ch.
+func (s *Scanner) EnrichAll(ctx context.Context, metas []Meta, ch chan<- Meta) error {
+	workers := runtime.NumCPU()
+	if workers > defaultWorkers {
+		workers = defaultWorkers
+	}
+	if len(metas) < workers {
+		workers = len(metas)
+	}
+	if workers == 0 {
+		return nil
+	}
+
+	jobs := make(chan Meta)
+	var wg sync.WaitGroup
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for m := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				enriched := s.enrichOne(m)
+				select {
+				case ch <- enriched:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+
+	for _, m := range metas {
+		select {
+		case jobs <- m:
+		case <-ctx.Done():
+			close(jobs)
+			wg.Wait()
+			return ctx.Err()
+		}
+	}
+	close(jobs)
+	wg.Wait()
+	return nil
+}
+
+func (s *Scanner) enrichOne(m Meta) Meta {
+	f, err := s.fsys.Open(m.Path)
+	if err != nil {
+		m.LoadErr = err
+		return m
+	}
+	defer f.Close()
+	if err := ExtractMeta(f, &m); err != nil && m.LoadErr == nil {
+		m.LoadErr = err
+	}
+	return m
 }

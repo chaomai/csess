@@ -1,6 +1,9 @@
 package session
 
 import (
+	"context"
+	"fmt"
+	"os"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -58,5 +61,59 @@ func TestScannerQuick_MissingDir(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("len = %d; want 0", len(got))
+	}
+}
+
+func TestEnrichAll_PopulatesMetas(t *testing.T) {
+	happy, err := os.ReadFile("testdata/happy.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fsys := fstest.MapFS{
+		"projects/-x/one.jsonl": {Data: happy, ModTime: time.Unix(1, 0)},
+		"projects/-x/two.jsonl": {Data: happy, ModTime: time.Unix(2, 0)},
+	}
+	s := NewScanner(fsys, "projects")
+	metas, _ := s.Quick("/x")
+
+	ch := make(chan Meta, len(metas))
+	if err := s.EnrichAll(context.Background(), metas, ch); err != nil {
+		t.Fatal(err)
+	}
+	close(ch)
+
+	var count int
+	for m := range ch {
+		if !m.Enriched {
+			t.Errorf("not enriched: %s", m.ID)
+		}
+		if m.FirstPrompt != "hello claude" {
+			t.Errorf("FirstPrompt = %q", m.FirstPrompt)
+		}
+		count++
+	}
+	if count != 2 {
+		t.Errorf("enriched %d; want 2", count)
+	}
+}
+
+func TestEnrichAll_CancelStopsQuickly(t *testing.T) {
+	happy, _ := os.ReadFile("testdata/happy.jsonl")
+	fsys := fstest.MapFS{}
+	for i := 0; i < 100; i++ {
+		name := fmt.Sprintf("projects/-x/s%03d.jsonl", i)
+		fsys[name] = &fstest.MapFile{Data: happy, ModTime: time.Unix(int64(i), 0)}
+	}
+	s := NewScanner(fsys, "projects")
+	metas, _ := s.Quick("/x")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+
+	ch := make(chan Meta, len(metas))
+	start := time.Now()
+	_ = s.EnrichAll(ctx, metas, ch)
+	if d := time.Since(start); d > 200*time.Millisecond {
+		t.Errorf("EnrichAll took %v with pre-cancelled ctx; want fast exit", d)
 	}
 }
