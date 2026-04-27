@@ -96,11 +96,11 @@ func (l *List) SetSize(w, h int) {
 func (l *List) Update(msg tea.Msg) (*List, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
-		case "j", "down":
+		case "j", "down", "ctrl+n":
 			if l.cursor < len(l.items)-1 {
 				l.cursor++
 			}
-		case "k", "up":
+		case "k", "up", "ctrl+p":
 			if l.cursor > 0 {
 				l.cursor--
 			}

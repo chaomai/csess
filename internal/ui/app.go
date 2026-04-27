@@ -222,9 +222,25 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.search.Reset()
 			a.applyFilter()
 			return a, nil
+		case "up", "down", "ctrl+p", "ctrl+n":
+			// Navigate the filtered list while staying in search mode.
+			a.list.Update(km)
+			a.updatePreviewFromSelection()
+			return a, a.loadTranscriptForSelection()
 		case "enter":
-			a.mode = modeNormal
-			a.search.Blur()
+			// Resume the currently highlighted match; search mode stays active.
+			sel, ok := a.list.Selected()
+			if !ok {
+				return a, nil
+			}
+			if !sel.Enriched || sel.CWD == "" {
+				a.banner = "session not ready (enrichment pending)"
+				a.bannerExp = time.Now().Add(3 * time.Second)
+				return a, nil
+			}
+			if a.cfg.ResumeSelected != nil {
+				return a, a.cfg.ResumeSelected(sel)
+			}
 			return a, nil
 		}
 		_, cmd := a.search.Update(km)
@@ -293,7 +309,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		a.preview.ToggleExpanded()
 		return a, nil
-	case "j", "down", "k", "up", "g", "G", "home", "end":
+	case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G", "home", "end":
 		a.list.Update(km)
 		a.updatePreviewFromSelection()
 		return a, a.loadTranscriptForSelection()

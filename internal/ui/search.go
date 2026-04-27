@@ -72,7 +72,7 @@ type SearchBar struct {
 func NewSearchBar() *SearchBar {
 	ti := textinput.New()
 	ti.Placeholder = "filter sessions..."
-	ti.Prompt = "/ "
+	ti.Prompt = "/"
 	ti.CharLimit = 128
 	return &SearchBar{input: ti}
 }
