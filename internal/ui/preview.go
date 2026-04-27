@@ -16,11 +16,13 @@ import (
 const viewportTurnCap = 5000
 
 var (
-	previewHeaderKey = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6c757d", Dark: "#9ca3af"})
-	previewErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"}).Bold(true)
-	previewRoleUser  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0369a1", Dark: "#38bdf8"}).Bold(true)
-	previewRoleAsst  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#c084fc"}).Bold(true)
-	previewSep       = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9ca3af", Dark: "#4b5563"})
+	// ANSI palette colors (0-15) let the terminal theme decide the actual
+	// shade — dayfox, nord, solarized, etc. all render correctly.
+	previewHeaderKey = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // bright black / dim
+	previewErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true) // red
+	previewRoleUser  = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true) // blue
+	previewRoleAsst  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true) // magenta
+	previewSep       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))            // dim
 )
 
 type Preview struct {
@@ -138,7 +140,48 @@ func (p *Preview) renderTurn(t session.Turn) string {
 	default:
 		head = t.Role
 	}
-	return head + "\n" + t.Text
+	return head + "\n" + unescapeLiterals(t.Text)
+}
+
+// unescapeLiterals expands literal "\n", "\t", "\r" escape sequences
+// (two characters: backslash + letter) into their actual whitespace. Real
+// newlines and tabs already present in the source text are left alone.
+// Also unescapes \" and \\ so embedded quotes read naturally.
+func unescapeLiterals(s string) string {
+	if !strings.ContainsRune(s, '\\') {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				b.WriteByte('\n')
+				i++
+				continue
+			case 't':
+				b.WriteByte('\t')
+				i++
+				continue
+			case 'r':
+				b.WriteByte('\r')
+				i++
+				continue
+			case '"':
+				b.WriteByte('"')
+				i++
+				continue
+			case '\\':
+				b.WriteByte('\\')
+				i++
+				continue
+			}
+		}
+		b.WriteByte(c)
+	}
+	return b.String()
 }
 
 func emptyDash(s string) string {

@@ -16,8 +16,9 @@ import (
 )
 
 var (
-	listCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#c084fc"}).Bold(true)
-	listDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9ca3af", Dark: "#6b7280"})
+	// ANSI palette colors defer to the user's terminal theme.
+	listCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true) // magenta
+	listDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))            // dim
 )
 
 // List is the left-pane session list. It is a pure model; selection
