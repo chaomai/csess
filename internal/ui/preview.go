@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"csess/internal/search"
 	"csess/internal/session"
 )
 
@@ -19,11 +20,13 @@ const viewportTurnCap = 5000
 var (
 	// ANSI palette colors (0-15) let the terminal theme decide the actual
 	// shade — dayfox, nord, solarized, etc. all render correctly.
-	previewHeaderKey = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))  // bright black / dim
-	previewErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true) // red
-	previewRoleUser  = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true) // blue
-	previewRoleAsst  = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true) // magenta
-	previewSep       = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))            // dim
+	previewHeaderKey  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                 // bright black / dim
+	previewErrStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Bold(true)      // red
+	previewRoleUser   = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)      // blue
+	previewRoleAsst   = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)      // magenta
+	previewSep        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                 // dim
+	previewMatchLine  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)      // yellow bold — match highlight
+	previewCtxLine    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                 // dim — context lines
 )
 
 type Preview struct {
@@ -213,4 +216,136 @@ func fmtTime(t time.Time) string {
 		return "—"
 	}
 	return t.Format("2006-01-02 15:04:05")
+}
+
+// SetMatchContext renders the session header plus a context snippet around
+// match. It does not touch p.turns. Call this when navigating the match list
+// to give a quick-look preview.
+func (p *Preview) SetMatchContext(m session.Meta, match search.Match) {
+	p.meta = m
+	p.turns = nil
+	p.expanded = false
+
+	var b strings.Builder
+	b.WriteString(p.header())
+	b.WriteString("\n")
+	b.WriteString(previewSep.Render(strings.Repeat("─", maxInt(10, p.width-2))))
+	b.WriteString("\n")
+	b.WriteString(fmt.Sprintf("match at line %d:\n", match.LineNo))
+
+	for _, bl := range match.Before {
+		label := fmt.Sprintf("  %d-  ", match.LineNo-len(match.Before))
+		wrapped := ansi.Wordwrap(bl, maxInt(p.width-len(label), 10), " ,.-")
+		b.WriteString(previewCtxLine.Render(label + wrapped))
+		b.WriteString("\n")
+	}
+
+	matchLabel := fmt.Sprintf("  %d   ", match.LineNo)
+	matchWrapped := ansi.Wordwrap(match.Line, maxInt(p.width-len(matchLabel), 10), " ,.-")
+	b.WriteString(previewMatchLine.Render(matchLabel+">>> "+matchWrapped+" <<<"))
+	b.WriteString("\n")
+
+	for i, al := range match.After {
+		label := fmt.Sprintf("  %d+%d  ", match.LineNo, i+1)
+		wrapped := ansi.Wordwrap(al, maxInt(p.width-len(matchLabel), 10), " ,.-")
+		b.WriteString(previewCtxLine.Render(label + wrapped))
+		b.WriteString("\n")
+	}
+
+	p.vp.SetContent(b.String())
+	p.vp.GotoTop()
+}
+
+// SetExpandedMatch switches the preview to full-transcript mode for the
+// session of match, with a ▶▶▶ marker on the turn whose LineNo matches
+// match.LineNo. The viewport scrolls so that turn is near the top.
+func (p *Preview) SetExpandedMatch(match search.Match, turns []session.Turn) {
+	p.turns = turns
+	p.expanded = true
+
+	// Build the content. Body renders newest-first (reverse order).
+	var b strings.Builder
+	b.WriteString(p.header())
+	b.WriteString("\n")
+	b.WriteString(previewSep.Render(strings.Repeat("─", maxInt(10, p.width-2))))
+	b.WriteString("\n")
+	b.WriteString(p.bodyExpanded(match.LineNo))
+
+	p.vp.SetContent(b.String())
+
+	// Compute scroll offset: header lines + separator + lines rendered for
+	// turns that appear before the target turn in the reversed sequence.
+	headerLines := strings.Count(p.header(), "\n") + 2 // +1 for the header itself, +1 for sep
+	offset := headerLines
+
+	// Turns render newest-first: turns[n-1], turns[n-2], ..., turns[0].
+	// We accumulate line counts until we hit the target turn.
+	found := false
+	for i := len(turns) - 1; i >= 0; i-- {
+		if turns[i].LineNo == match.LineNo {
+			found = true
+			break
+		}
+		offset += p.renderedTurnHeight(turns[i])
+	}
+	if found {
+		p.vp.SetYOffset(offset)
+	} else {
+		p.vp.GotoTop()
+	}
+}
+
+// bodyExpanded renders turns with a ▶▶▶ prefix on the turn matching targetLineNo.
+func (p *Preview) bodyExpanded(targetLineNo int) string {
+	turns := p.turns
+	cut := 0
+	if !p.expanded && len(turns) > viewportTurnCap {
+		cut = len(turns) - viewportTurnCap
+		turns = turns[cut:]
+	}
+	var b strings.Builder
+	for i := len(turns) - 1; i >= 0; i-- {
+		t := turns[i]
+		if t.LineNo == targetLineNo {
+			b.WriteString(p.renderTurnMarked(t))
+		} else {
+			b.WriteString(p.renderTurn(t))
+		}
+		b.WriteString("\n")
+	}
+	if cut > 0 {
+		b.WriteString(previewSep.Render(fmt.Sprintf("… %d earlier turns hidden, press 'a' to show all", cut)))
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// renderTurnMarked renders a turn with a ▶▶▶ prefix on the head line.
+func (p *Preview) renderTurnMarked(t session.Turn) string {
+	var head string
+	switch t.Role {
+	case "user":
+		head = previewRoleUser.Render(fmt.Sprintf("▶▶▶ %s  user", fmtTime(t.Timestamp)))
+	case "assistant":
+		head = previewRoleAsst.Render(fmt.Sprintf("▶▶▶ %s  assistant", fmtTime(t.Timestamp)))
+	default:
+		head = "▶▶▶ " + t.Role
+	}
+	body := unescapeLiterals(t.Text)
+	if p.width > 0 {
+		body = ansi.Wordwrap(body, p.width, " ,.-、。，")
+	}
+	return head + "\n" + body
+}
+
+// renderedTurnHeight estimates how many terminal rows a turn will occupy
+// when rendered at the current pane width. Used for SetExpandedMatch
+// scroll offset calculation.
+func (p *Preview) renderedTurnHeight(t session.Turn) int {
+	body := unescapeLiterals(t.Text)
+	if p.width > 0 {
+		body = ansi.Wordwrap(body, p.width, " ,.-、。，")
+	}
+	// 1 head line + body lines + 1 blank line between turns
+	return strings.Count(body, "\n") + 1 + 1 + 1
 }
