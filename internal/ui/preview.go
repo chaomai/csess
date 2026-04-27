@@ -16,11 +16,11 @@ import (
 const viewportTurnCap = 5000
 
 var (
-	previewHeaderKey = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	previewErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
-	previewRoleUser  = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true)
-	previewRoleAsst  = lipgloss.NewStyle().Foreground(lipgloss.Color("220")).Bold(true)
-	previewSep       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	previewHeaderKey = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#6c757d", Dark: "#9ca3af"})
+	previewErrStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#f87171"}).Bold(true)
+	previewRoleUser  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#0369a1", Dark: "#38bdf8"}).Bold(true)
+	previewRoleAsst  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#c084fc"}).Bold(true)
+	previewSep       = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9ca3af", Dark: "#4b5563"})
 )
 
 type Preview struct {
@@ -115,11 +115,14 @@ func (p *Preview) body() string {
 		turns = turns[cut:]
 	}
 	var b strings.Builder
-	if cut > 0 {
-		b.WriteString(previewSep.Render(fmt.Sprintf("… %d earlier turns hidden, press 'a' to show all\n", cut)))
+	// Render newest turn first so the most recent exchange is visible
+	// without scrolling. Oldest turns appear at the bottom.
+	for i := len(turns) - 1; i >= 0; i-- {
+		b.WriteString(p.renderTurn(turns[i]))
+		b.WriteString("\n")
 	}
-	for _, t := range turns {
-		b.WriteString(p.renderTurn(t))
+	if cut > 0 {
+		b.WriteString(previewSep.Render(fmt.Sprintf("… %d earlier turns hidden, press 'a' to show all", cut)))
 		b.WriteString("\n")
 	}
 	return b.String()

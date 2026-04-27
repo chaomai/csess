@@ -16,8 +16,8 @@ import (
 )
 
 var (
-	listCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true)
-	listDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	listCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#7c3aed", Dark: "#c084fc"}).Bold(true)
+	listDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "#9ca3af", Dark: "#6b7280"})
 )
 
 // List is the left-pane session list. It is a pure model; selection
