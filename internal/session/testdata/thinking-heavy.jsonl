@@ -1,0 +1,3 @@
+{"type":"permission-mode","permissionMode":"default","sessionId":"think"}
+{"parentUuid":null,"isSidechain":false,"type":"user","message":{"role":"user","content":"think hard"},"uuid":"u1","timestamp":"2026-01-15T10:00:00.000Z","cwd":"/x","gitBranch":"main","version":"2.1.117","userType":"external"}
+{"parentUuid":"u1","message":{"model":"claude-opus-4-7","role":"assistant","content":[{"type":"thinking","thinking":"abc","signature":"s1"},{"type":"thinking","thinking":"def","signature":"s2"},{"type":"text","text":"done"}]},"uuid":"a1","timestamp":"2026-01-15T10:00:10.000Z","type":"assistant"}
