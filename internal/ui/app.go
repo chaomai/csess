@@ -3,12 +3,14 @@ package ui
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"csess/internal/search"
 	"csess/internal/session"
 )
 
@@ -53,6 +55,16 @@ type BatchTurnsMsg struct {
 	Turns []session.Turn
 }
 
+// searchTriggerMsg fires after the debounce timer expires.
+type searchTriggerMsg struct{ query string }
+
+// searchResultsMsg delivers rg results back to the App.
+type searchResultsMsg struct {
+	query   string
+	matches []search.Match
+	err     error
+}
+
 // --- Modes ---
 
 type mode int
@@ -62,6 +74,9 @@ const (
 	modeSearch
 	modeConfirm
 )
+
+// hexPrefixRe matches queries that look like session-id prefixes.
+var hexPrefixRe = regexp.MustCompile(`^[0-9a-f-]{3,}$`)
 
 // --- Config ---
 
@@ -75,6 +90,10 @@ type AppConfig struct {
 	ResumeSelected func(m session.Meta) tea.Cmd
 	CopySelected   func(m session.Meta) tea.Cmd
 	TrashSelected  func(m session.Meta) tea.Cmd
+
+	// RunSearch, when non-nil, replaces the in-memory filter with rg-backed
+	// full-text search. Receives the active context so callers can cancel.
+	RunSearch func(ctx context.Context, query string) ([]search.Match, error)
 }
 
 // --- App model ---
@@ -94,6 +113,14 @@ type App struct {
 	transcriptSeq  int
 	transcriptCtx  context.Context
 	transcriptStop context.CancelFunc
+
+	// Full-text search state.
+	searchMatches  []search.Match
+	matchList      *MatchList
+	matchExpanded  bool // true = showing full transcript with marker
+	showMatches    bool // true = left pane renders matchList instead of list
+	searchCancel   context.CancelFunc
+	currentMatch   *search.Match // the match currently previewed (for re-show on Esc from expanded)
 }
 
 func NewApp(cfg AppConfig) *App {
@@ -101,8 +128,10 @@ func NewApp(cfg AppConfig) *App {
 	list := NewList(listW, cfg.Height-2, cfg.AllMode)
 	preview := NewPreview(prevW, cfg.Height-2)
 	search := NewSearchBar()
-	app := &App{cfg: cfg, list: list, preview: preview, search: search}
+	matchList := NewMatchList(listW, cfg.Height-2)
+	app := &App{cfg: cfg, list: list, preview: preview, search: search, matchList: matchList}
 	app.transcriptCtx, app.transcriptStop = context.WithCancel(context.Background())
+	app.searchCancel = func() {} // no-op until first search
 	return app
 }
 
@@ -127,6 +156,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.cfg.Width, a.cfg.Height = m.Width, m.Height
 		listW, prevW := splitWidth(m.Width)
 		a.list.SetSize(listW, m.Height-2)
+		a.matchList.SetSize(listW, m.Height-2)
 		a.preview.SetSize(prevW, m.Height-2)
 		return a, nil
 
@@ -163,7 +193,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Seq != a.transcriptSeq {
 			return a, nil
 		}
-		a.preview.AddTurns(m.Turns)
+		if a.showMatches && a.matchExpanded && a.currentMatch != nil {
+			// Expanded match view: use SetExpandedMatch to render full
+			// transcript with ▶▶▶ marker on the matched turn.
+			a.preview.SetExpandedMatch(*a.currentMatch, m.Turns)
+		} else {
+			a.preview.AddTurns(m.Turns)
+		}
 		return a, nil
 
 	case BannerMsg:
@@ -208,6 +244,27 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		return a.handleKey(m)
+
+	case searchTriggerMsg:
+		return a, a.runSearch(m.query)
+
+	case searchResultsMsg:
+		// Guard against stale results from a previous query.
+		if m.query != a.search.Query() {
+			return a, nil
+		}
+		if m.err != nil {
+			a.banner = "search error: " + m.err.Error()
+			a.bannerExp = time.Now().Add(5 * time.Second)
+			return a, nil
+		}
+		a.searchMatches = m.matches
+		a.matchList.SetItems(m.matches)
+		a.showMatches = true
+		a.matchExpanded = false
+		a.currentMatch = nil
+		a.updatePreviewFromMatchSelection()
+		return a, nil
 	}
 	return a, nil
 }
@@ -217,35 +274,103 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case modeSearch:
 		switch km.String() {
 		case "esc":
+			if a.showMatches && a.matchExpanded {
+				// First Esc from expanded: return to context (match) view.
+				a.matchExpanded = false
+				a.updatePreviewFromMatchSelection()
+				return a, nil
+			}
+			// Esc from context view or plain search: exit search entirely.
 			a.mode = modeNormal
 			a.search.Blur()
 			a.search.Reset()
+			a.showMatches = false
+			a.matchExpanded = false
+			a.searchMatches = nil
+			a.currentMatch = nil
+			a.searchCancel()
 			a.applyFilter()
 			return a, nil
+
 		case "up", "down", "ctrl+p", "ctrl+n":
-			// Navigate the filtered list while staying in search mode.
+			if a.showMatches && !a.matchExpanded {
+				// Navigate match list.
+				a.matchList.Update(km)
+				a.updatePreviewFromMatchSelection()
+				return a, nil
+			}
+			if a.showMatches && a.matchExpanded {
+				// In expanded view, delegate to preview scroll.
+				_, cmd := a.preview.Update(km)
+				return a, cmd
+			}
+			// Plain in-memory filter list navigation.
 			a.list.Update(km)
 			a.updatePreviewFromSelection()
 			return a, a.loadTranscriptForSelection()
+
 		case "enter":
-			// Resume the currently highlighted match; search mode stays active.
-			sel, ok := a.list.Selected()
+			if a.showMatches {
+				if a.matchExpanded {
+					// Second Enter: resume the session for this match.
+					sel, matchMeta := a.matchListSelectedMeta()
+					if !sel {
+						return a, nil
+					}
+					if !matchMeta.Enriched || matchMeta.CWD == "" {
+						a.banner = "session not ready (enrichment pending)"
+						a.bannerExp = time.Now().Add(3 * time.Second)
+						return a, nil
+					}
+					if a.cfg.ResumeSelected != nil {
+						return a, a.cfg.ResumeSelected(matchMeta)
+					}
+					return a, nil
+				}
+				// First Enter: expand to full transcript with marker.
+				match, ok := a.matchList.Selected()
+				if !ok {
+					return a, nil
+				}
+				a.currentMatch = &match
+				a.matchExpanded = true
+				// Load transcript and pass it to SetExpandedMatch.
+				parentMeta := a.metaForMatch(match)
+				a.preview.SetMeta(parentMeta)
+				a.transcriptStop()
+				a.transcriptSeq++
+				a.transcriptCtx, a.transcriptStop = context.WithCancel(context.Background())
+				var loadCmd tea.Cmd
+				if a.cfg.LoadTranscript != nil {
+					loadCmd = a.cfg.LoadTranscript(a.transcriptSeq, parentMeta, a.transcriptCtx)
+				}
+				return a, loadCmd
+			}
+			// Plain in-memory search: resume highlighted session.
+			selMeta, ok := a.list.Selected()
 			if !ok {
 				return a, nil
 			}
-			if !sel.Enriched || sel.CWD == "" {
+			if !selMeta.Enriched || selMeta.CWD == "" {
 				a.banner = "session not ready (enrichment pending)"
 				a.bannerExp = time.Now().Add(3 * time.Second)
 				return a, nil
 			}
 			if a.cfg.ResumeSelected != nil {
-				return a, a.cfg.ResumeSelected(sel)
+				return a, a.cfg.ResumeSelected(selMeta)
 			}
 			return a, nil
 		}
+
+		// Default: pass keystroke to search input, then trigger debounced search.
 		_, cmd := a.search.Update(km)
-		a.applyFilter()
-		return a, cmd
+		q := a.search.Query()
+		if !a.showMatches {
+			// Still using in-memory filter — always apply it immediately.
+			a.applyFilter()
+		}
+		debounceCmd := a.scheduleSearch(q)
+		return a, tea.Batch(cmd, debounceCmd)
 
 	case modeConfirm:
 		_, _ = a.confirm.Update(km)
@@ -349,7 +474,12 @@ func (a *App) loadTranscriptForSelection() tea.Cmd {
 // --- View ---
 
 func (a *App) View() string {
-	left := a.list.View()
+	var left string
+	if a.showMatches {
+		left = a.matchList.View()
+	} else {
+		left = a.list.View()
+	}
 	right := a.preview.View()
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, lipgloss.NewStyle().Padding(0, 1).Render("│"), right)
 
@@ -362,6 +492,12 @@ func (a *App) statusLine() string {
 	switch a.mode {
 	case modeSearch:
 		parts = append(parts, a.search.View())
+		if a.showMatches && a.matchExpanded {
+			parts = append(parts, "[Enter] resume  [Esc] back to matches")
+		} else if a.showMatches {
+			parts = append(parts, fmt.Sprintf("%d matches", len(a.searchMatches)))
+			parts = append(parts, "[Enter] expand  [Esc] exit search")
+		}
 	case modeConfirm:
 		if a.confirm != nil {
 			parts = append(parts, a.confirm.View())
@@ -375,4 +511,66 @@ func (a *App) statusLine() string {
 		parts = append(parts, "· "+a.banner)
 	}
 	return strings.Join(parts, "   ")
+}
+
+// scheduleSearch debounces rg invocation. If RunSearch is nil or the query
+// looks like a hex prefix, we skip rg and rely on applyFilter instead.
+func (a *App) scheduleSearch(q string) tea.Cmd {
+	if q == "" || a.cfg.RunSearch == nil || hexPrefixRe.MatchString(q) {
+		// Hex prefix or no provider: just filter in memory.
+		a.showMatches = false
+		a.matchExpanded = false
+		a.currentMatch = nil
+		a.searchCancel()
+		a.applyFilter()
+		return nil
+	}
+	// Debounce: emit a trigger after 200ms.
+	return tea.Tick(200*time.Millisecond, func(_ time.Time) tea.Msg {
+		return searchTriggerMsg{query: q}
+	})
+}
+
+// runSearch cancels any prior search and spawns a new one.
+func (a *App) runSearch(query string) tea.Cmd {
+	if query != a.search.Query() {
+		return nil // stale trigger
+	}
+	a.searchCancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.searchCancel = cancel
+	fn := a.cfg.RunSearch
+	return func() tea.Msg {
+		matches, err := fn(ctx, query)
+		return searchResultsMsg{query: query, matches: matches, err: err}
+	}
+}
+
+// metaForMatch looks up the session.Meta for a match from allItems.
+// Returns an empty Meta with the ID set if not found.
+func (a *App) metaForMatch(m search.Match) session.Meta {
+	if i, ok := a.allIndex[m.SessionID]; ok && i < len(a.allItems) {
+		return a.allItems[i]
+	}
+	return session.Meta{ID: m.SessionID}
+}
+
+// updatePreviewFromMatchSelection shows a context snippet for the selected match.
+func (a *App) updatePreviewFromMatchSelection() {
+	match, ok := a.matchList.Selected()
+	if !ok {
+		a.preview.SetMeta(session.Meta{})
+		return
+	}
+	parent := a.metaForMatch(match)
+	a.preview.SetMatchContext(parent, match)
+}
+
+// matchListSelectedMeta returns (true, Meta) for the session of the selected match.
+func (a *App) matchListSelectedMeta() (bool, session.Meta) {
+	match, ok := a.matchList.Selected()
+	if !ok {
+		return false, session.Meta{}
+	}
+	return true, a.metaForMatch(match)
 }

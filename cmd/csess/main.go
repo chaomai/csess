@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"csess/internal/action"
+	"csess/internal/search"
 	"csess/internal/session"
 	"csess/internal/ui"
 )
@@ -24,6 +25,8 @@ func main() {
 		hereFlag    = flag.Bool("here", false, "only show sessions for the current directory (default: all projects)")
 		projectsDir = flag.String("projects-dir", "", "override ~/.claude/projects")
 		trashDir    = flag.String("trash-dir", "", "override ~/.claude/.trash")
+		contextN    = flag.Int("context", 3, "lines of context around each match in the context preview")
+		maxMatches  = flag.Int("max-matches", 1000, "per-file match cap passed to rg (--max-count)")
 	)
 	flag.Parse()
 
@@ -81,6 +84,12 @@ func main() {
 		DISPLAY: os.Getenv("DISPLAY"),
 	}, os.Stderr)
 
+	rgRunner := &search.Options{
+		ProjectsDir: *projectsDir,
+		Context:     *contextN,
+		MaxMatches:  *maxMatches,
+	}
+
 	var pendingResume *session.Meta
 	cfg := ui.AppConfig{
 		Width: 120, Height: 40, AllMode: allMode, Scope: scope,
@@ -88,6 +97,7 @@ func main() {
 		ResumeSelected: buildResume(&pendingResume),
 		CopySelected:   buildCopy(clip),
 		TrashSelected:  buildTrash(*trashDir),
+		RunSearch:      buildRunSearch(rgRunner),
 	}
 	app := ui.NewApp(cfg)
 
@@ -222,4 +232,12 @@ func buildTrash(trashDir string) func(m session.Meta) tea.Cmd {
 func fatal(f string, args ...any) {
 	fmt.Fprintf(os.Stderr, f+"\n", args...)
 	os.Exit(1)
+}
+
+func buildRunSearch(opts *search.Options) func(ctx context.Context, query string) ([]search.Match, error) {
+	return func(ctx context.Context, query string) ([]search.Match, error) {
+		o := *opts // copy so each call can have its own query
+		o.Query = query
+		return search.Run(ctx, o)
+	}
 }
