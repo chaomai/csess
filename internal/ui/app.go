@@ -469,7 +469,6 @@ func (a *App) scheduleSearch(q string) tea.Cmd {
 	if q == "" || a.cfg.RunSearch == nil || hexPrefixRe.MatchString(q) {
 		// Hex prefix or no provider: just filter in memory.
 		a.showMatches = false
-		a.matchExpanded = false
 		a.currentMatch = nil
 		a.searchCancel()
 		a.applyFilter()
