@@ -120,70 +120,43 @@ func TestApp_SearchResultsMsgSwitchesToMatchMode(t *testing.T) {
 	}
 }
 
-// TestApp_SearchEnterExpandsThenResumes verifies the two-stage Enter UX.
-func TestApp_SearchEnterExpandsThenResumes(t *testing.T) {
+// TestApp_SearchEnterResumesDirectly verifies that Enter on a match row
+// resumes the parent session immediately (one-stage, no expand).
+func TestApp_SearchEnterResumesDirectly(t *testing.T) {
 	var resumed session.Meta
 	resumeFn := func(m session.Meta) tea.Cmd {
 		resumed = m
 		return func() tea.Msg { return tea.Quit() }
 	}
-	loadFn := func(seq int, m session.Meta, ctx context.Context) tea.Cmd {
-		// Return turns including one at lineNo 5 to match the first match.
-		return func() tea.Msg {
-			return BatchTurnsMsg{Seq: seq, Turns: []session.Turn{
-				{Role: "user", Text: "hello world", LineNo: 5},
-				{Role: "assistant", Text: "hi", LineNo: 7},
-			}}
-		}
-	}
 
-	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: loadFn, ResumeSelected: resumeFn})
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad, ResumeSelected: resumeFn})
 	app.Update(ScanMsg{Metas: []session.Meta{
 		{ID: "abc123", Path: "/fake/abc123.jsonl", Enriched: true, CWD: "/work/proj"},
 	}})
 
-	// Enter search mode.
 	m, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	mm := m.(*App)
 
-	// Inject search results.
-	matches := makeTestSearchMatches()[:1] // just abc123
+	matches := makeTestSearchMatches()[:1]
 	m, _ = m.Update(searchResultsMsg{query: mm.search.Query(), matches: matches})
 	mm = m.(*App)
 	if !mm.showMatches {
 		t.Fatal("expected showMatches after results")
 	}
 
-	// First Enter: should expand to full transcript.
-	m, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	mm = m.(*App)
-	if !mm.matchExpanded {
-		t.Error("matchExpanded should be true after first Enter")
-	}
+	// One Enter resumes directly.
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
 	if cmd == nil {
-		t.Error("first Enter should return a LoadTranscript cmd")
+		t.Fatal("Enter should return a ResumeSelected cmd")
 	}
-
-	// Execute the transcript load cmd.
-	msg := cmd()
-	m, _ = m.Update(msg)
-	mm = m.(*App)
-
-	// Second Enter: should trigger ResumeSelected.
-	m, cmd = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	if cmd == nil {
-		t.Error("second Enter should return a ResumeSelected cmd")
-	}
-	// Execute the resume cmd.
 	cmd()
 	if resumed.ID != "abc123" {
 		t.Errorf("resumed.ID = %q; want abc123", resumed.ID)
 	}
 }
 
-// TestApp_SearchEscFromExpandedBacksToContextView verifies that Esc from
-// matchExpanded returns to context (match) view without exiting search.
-func TestApp_SearchEscFromExpandedBacksToContextView(t *testing.T) {
+// TestApp_SearchEscExitsSearch verifies Esc exits search mode directly.
+func TestApp_SearchEscExitsSearch(t *testing.T) {
 	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
 	app.Update(ScanMsg{Metas: []session.Meta{
 		{ID: "abc123", Enriched: true, CWD: "/w"},
@@ -193,31 +166,10 @@ func TestApp_SearchEscFromExpandedBacksToContextView(t *testing.T) {
 	matches := makeTestSearchMatches()[:1]
 	m, _ = m.Update(searchResultsMsg{query: mm.search.Query(), matches: matches})
 
-	// First Enter to expand.
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	mm = m.(*App)
-	if !mm.matchExpanded {
-		t.Fatal("expected matchExpanded")
-	}
-
-	// Esc should return to context view (not exit search).
-	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
-	mm = m.(*App)
-	if mm.matchExpanded {
-		t.Error("matchExpanded should be false after Esc")
-	}
-	if mm.mode != modeSearch {
-		t.Error("mode should still be modeSearch after Esc from expanded")
-	}
-	if !mm.showMatches {
-		t.Error("showMatches should still be true after Esc from expanded")
-	}
-
-	// Second Esc should exit search entirely.
 	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	mm = m.(*App)
 	if mm.mode != modeNormal {
-		t.Errorf("mode = %v; want modeNormal after second Esc", mm.mode)
+		t.Errorf("mode = %v; want modeNormal after Esc", mm.mode)
 	}
 	if mm.showMatches {
 		t.Error("showMatches should be false after exiting search")
