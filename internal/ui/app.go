@@ -115,12 +115,11 @@ type App struct {
 	transcriptStop context.CancelFunc
 
 	// Full-text search state.
-	searchMatches  []search.Match
-	matchList      *MatchList
-	matchExpanded  bool // true = showing full transcript with marker
-	showMatches    bool // true = left pane renders matchList instead of list
-	searchCancel   context.CancelFunc
-	currentMatch   *search.Match // the match currently previewed (for re-show on Esc from expanded)
+	searchMatches []search.Match
+	matchList     *MatchList
+	showMatches   bool // true = left pane renders matchList instead of list
+	searchCancel  context.CancelFunc
+	currentMatch  *search.Match // the match currently previewed
 }
 
 func NewApp(cfg AppConfig) *App {
@@ -193,13 +192,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Seq != a.transcriptSeq {
 			return a, nil
 		}
-		if a.showMatches && a.matchExpanded && a.currentMatch != nil {
-			// Expanded match view: use SetExpandedMatch to render full
-			// transcript with ▶▶▶ marker on the matched turn.
-			a.preview.SetExpandedMatch(*a.currentMatch, m.Turns)
-		} else {
-			a.preview.AddTurns(m.Turns)
-		}
+		a.preview.AddTurns(m.Turns)
 		return a, nil
 
 	case BannerMsg:
@@ -261,7 +254,6 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.searchMatches = m.matches
 		a.matchList.SetItems(m.matches)
 		a.showMatches = true
-		a.matchExpanded = false
 		a.currentMatch = nil
 		a.updatePreviewFromMatchSelection()
 		return a, nil
@@ -274,18 +266,11 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case modeSearch:
 		switch km.String() {
 		case "esc":
-			if a.showMatches && a.matchExpanded {
-				// First Esc from expanded: return to context (match) view.
-				a.matchExpanded = false
-				a.updatePreviewFromMatchSelection()
-				return a, nil
-			}
-			// Esc from context view or plain search: exit search entirely.
+			// Exit search entirely.
 			a.mode = modeNormal
 			a.search.Blur()
 			a.search.Reset()
 			a.showMatches = false
-			a.matchExpanded = false
 			a.searchMatches = nil
 			a.currentMatch = nil
 			a.searchCancel()
@@ -293,71 +278,39 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 
 		case "up", "down", "ctrl+p", "ctrl+n":
-			if a.showMatches && !a.matchExpanded {
-				// Navigate match list.
+			if a.showMatches {
 				a.matchList.Update(km)
 				a.updatePreviewFromMatchSelection()
 				return a, nil
 			}
-			if a.showMatches && a.matchExpanded {
-				// In expanded view, delegate to preview scroll.
-				_, cmd := a.preview.Update(km)
-				return a, cmd
-			}
-			// Plain in-memory filter list navigation.
 			a.list.Update(km)
 			a.updatePreviewFromSelection()
 			return a, a.loadTranscriptForSelection()
 
+		case "pgup", "pgdown":
+			// Scroll the preview pane without moving the list cursor.
+			_, cmd := a.preview.Update(km)
+			return a, cmd
+
 		case "enter":
+			// Resume the selected session — directly, no two-stage expand.
+			var meta session.Meta
+			var ok bool
 			if a.showMatches {
-				if a.matchExpanded {
-					// Second Enter: resume the session for this match.
-					sel, matchMeta := a.matchListSelectedMeta()
-					if !sel {
-						return a, nil
-					}
-					if !matchMeta.Enriched || matchMeta.CWD == "" {
-						a.banner = "session not ready (enrichment pending)"
-						a.bannerExp = time.Now().Add(3 * time.Second)
-						return a, nil
-					}
-					if a.cfg.ResumeSelected != nil {
-						return a, a.cfg.ResumeSelected(matchMeta)
-					}
-					return a, nil
-				}
-				// First Enter: expand to full transcript with marker.
-				match, ok := a.matchList.Selected()
-				if !ok {
-					return a, nil
-				}
-				a.currentMatch = &match
-				a.matchExpanded = true
-				// Load transcript and pass it to SetExpandedMatch.
-				parentMeta := a.metaForMatch(match)
-				a.preview.SetMeta(parentMeta)
-				a.transcriptStop()
-				a.transcriptSeq++
-				a.transcriptCtx, a.transcriptStop = context.WithCancel(context.Background())
-				var loadCmd tea.Cmd
-				if a.cfg.LoadTranscript != nil {
-					loadCmd = a.cfg.LoadTranscript(a.transcriptSeq, parentMeta, a.transcriptCtx)
-				}
-				return a, loadCmd
+				ok, meta = a.matchListSelectedMeta()
+			} else {
+				meta, ok = a.list.Selected()
 			}
-			// Plain in-memory search: resume highlighted session.
-			selMeta, ok := a.list.Selected()
 			if !ok {
 				return a, nil
 			}
-			if !selMeta.Enriched || selMeta.CWD == "" {
+			if !meta.Enriched || meta.CWD == "" {
 				a.banner = "session not ready (enrichment pending)"
 				a.bannerExp = time.Now().Add(3 * time.Second)
 				return a, nil
 			}
 			if a.cfg.ResumeSelected != nil {
-				return a, a.cfg.ResumeSelected(selMeta)
+				return a, a.cfg.ResumeSelected(meta)
 			}
 			return a, nil
 		}
@@ -366,7 +319,6 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		_, cmd := a.search.Update(km)
 		q := a.search.Query()
 		if !a.showMatches {
-			// Still using in-memory filter — always apply it immediately.
 			a.applyFilter()
 		}
 		debounceCmd := a.scheduleSearch(q)
@@ -492,11 +444,9 @@ func (a *App) statusLine() string {
 	switch a.mode {
 	case modeSearch:
 		parts = append(parts, a.search.View())
-		if a.showMatches && a.matchExpanded {
-			parts = append(parts, "[Enter] resume  [Esc] back to matches")
-		} else if a.showMatches {
+		if a.showMatches {
 			parts = append(parts, fmt.Sprintf("%d matches", len(a.searchMatches)))
-			parts = append(parts, "[Enter] expand  [Esc] exit search")
+			parts = append(parts, "[Enter] resume  [PgUp/PgDn] scroll  [Esc] exit search")
 		}
 	case modeConfirm:
 		if a.confirm != nil {
