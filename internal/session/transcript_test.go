@@ -31,8 +31,16 @@ func TestStreamTurns_Happy(t *testing.T) {
 	if turns[0].Role != "user" || turns[0].Text != "hello claude" {
 		t.Errorf("turn0 = %+v", turns[0])
 	}
+	// happy.jsonl: line 1 = permission-mode, line 2 = file-history, line 3 = user "hello claude"
+	if turns[0].LineNo != 3 {
+		t.Errorf("turn0.LineNo = %d; want 3", turns[0].LineNo)
+	}
 	if turns[1].Role != "assistant" || turns[1].Text != "Hi there!" {
 		t.Errorf("turn1 = %+v", turns[1])
+	}
+	// line 4 = last-prompt, line 5 = assistant "Hi there!"
+	if turns[1].LineNo != 5 {
+		t.Errorf("turn1.LineNo = %d; want 5", turns[1].LineNo)
 	}
 	if turns[2].Role != "user" || turns[2].Text != "run ls" {
 		t.Errorf("turn2 = %+v", turns[2])

@@ -17,6 +17,7 @@ type Turn struct {
 	Role      string
 	Timestamp time.Time
 	Text      string
+	LineNo    int // 1-based line number in the source JSONL file
 }
 
 // StreamTurns reads fsys[path] line by line and sends each user/assistant
@@ -32,7 +33,9 @@ func StreamTurns(ctx context.Context, fsys fs.FS, path string, ch chan<- Turn) e
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
 
+	lineNo := 0
 	for sc.Scan() {
+		lineNo++
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -44,6 +47,7 @@ func StreamTurns(ctx context.Context, fsys fs.FS, path string, ch chan<- Turn) e
 		if !ok {
 			continue
 		}
+		t.LineNo = lineNo
 		select {
 		case ch <- t:
 		case <-ctx.Done():
