@@ -24,6 +24,11 @@ type EnrichMsg struct {
 	Meta session.Meta
 }
 
+// EnrichDoneMsg signals that all in-flight enrichment has completed, so
+// the list can be re-sorted by UpdatedAt (which is only populated after
+// enrichment). See list.go:ReplaceItem for why we defer the sort.
+type EnrichDoneMsg struct{}
+
 type TurnMsg struct {
 	Seq  int
 	Turn session.Turn
@@ -181,6 +186,16 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case EnrichDoneMsg:
+		// All enrichment has landed; re-sort the list now that UpdatedAt
+		// is populated. Resort preserves cursor by ID so the selected
+		// session doesn't change, and the preview's meta was already
+		// kept in sync by the EnrichMsg handler — so we must NOT call
+		// updatePreviewFromSelection here (it would SetMeta and wipe
+		// the loaded transcript).
+		a.list.Resort()
+		return a, nil
+
 	case TurnMsg:
 		if m.Seq != a.transcriptSeq {
 			return a, nil
@@ -192,7 +207,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.Seq != a.transcriptSeq {
 			return a, nil
 		}
-		a.preview.AddTurns(m.Turns)
+		if a.currentMatch != nil {
+			// Match-preview path: render the full transcript with the
+			// matched line highlighted by ▶▶▶.
+			a.preview.SetExpandedMatch(*a.currentMatch, m.Turns)
+		} else {
+			a.preview.AddTurns(m.Turns)
+		}
 		return a, nil
 
 	case BannerMsg:
@@ -255,8 +276,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		a.matchList.SetItems(m.matches)
 		a.showMatches = true
 		a.currentMatch = nil
-		a.updatePreviewFromMatchSelection()
-		return a, nil
+		return a, a.updatePreviewFromMatchSelection()
 	}
 	return a, nil
 }
@@ -280,8 +300,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "up", "down", "ctrl+p", "ctrl+n":
 			if a.showMatches {
 				a.matchList.Update(km)
-				a.updatePreviewFromMatchSelection()
-				return a, nil
+				return a, a.updatePreviewFromMatchSelection()
 			}
 			a.list.Update(km)
 			a.updatePreviewFromSelection()
@@ -414,13 +433,24 @@ func (a *App) updatePreviewFromSelection() {
 
 func (a *App) loadTranscriptForSelection() tea.Cmd {
 	sel, ok := a.list.Selected()
-	if !ok || a.cfg.LoadTranscript == nil {
+	if !ok {
+		return nil
+	}
+	return a.loadTranscript(sel)
+}
+
+// loadTranscript cancels any in-flight transcript load and starts a new
+// one for m. BatchTurnsMsg handler dispatches on a.currentMatch to decide
+// between plain-list rendering (AddTurns) and match-highlight rendering
+// (SetExpandedMatch).
+func (a *App) loadTranscript(m session.Meta) tea.Cmd {
+	if a.cfg.LoadTranscript == nil {
 		return nil
 	}
 	a.transcriptStop()
 	a.transcriptSeq++
 	a.transcriptCtx, a.transcriptStop = context.WithCancel(context.Background())
-	return a.cfg.LoadTranscript(a.transcriptSeq, sel, a.transcriptCtx)
+	return a.cfg.LoadTranscript(a.transcriptSeq, m, a.transcriptCtx)
 }
 
 // --- View ---
@@ -504,15 +534,20 @@ func (a *App) metaForMatch(m search.Match) session.Meta {
 	return session.Meta{ID: m.SessionID}
 }
 
-// updatePreviewFromMatchSelection shows a context snippet for the selected match.
-func (a *App) updatePreviewFromMatchSelection() {
+// updatePreviewFromMatchSelection shows the full transcript of the
+// matched session with the matched line highlighted (▶▶▶). Until turns
+// arrive via BatchTurnsMsg, only the session header is visible.
+func (a *App) updatePreviewFromMatchSelection() tea.Cmd {
 	match, ok := a.matchList.Selected()
 	if !ok {
 		a.preview.SetMeta(session.Meta{})
-		return
+		a.currentMatch = nil
+		return nil
 	}
 	parent := a.metaForMatch(match)
-	a.preview.SetMatchContext(parent, match)
+	a.currentMatch = &match
+	a.preview.SetMeta(parent)
+	return a.loadTranscript(parent)
 }
 
 // matchListSelectedMeta returns (true, Meta) for the session of the selected match.

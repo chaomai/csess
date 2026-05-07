@@ -48,39 +48,6 @@ func TestPreview_CorruptMarker(t *testing.T) {
 	}
 }
 
-func TestPreview_SetMatchContext(t *testing.T) {
-	p := NewPreview(80, 20)
-	meta := session.Meta{
-		ID: "02c753f2-aaa", CWD: "/Users/chaomai/Downloads", Enriched: true,
-	}
-	m := search.Match{
-		SessionID: "02c753f2-aaa",
-		FilePath:  "/p/a.jsonl",
-		LineNo:    42,
-		Line:      `{"cwd":"/Users/chaomai/Downloads/test"}`,
-		Before:    []string{"before line content"},
-		After:     []string{"after line content"},
-	}
-	p.SetMatchContext(meta, m)
-	v := p.View()
-
-	if !strings.Contains(v, "02c753f2-aaa") {
-		t.Errorf("missing session id in header: %s", v)
-	}
-	if !strings.Contains(v, "match at line 42") {
-		t.Errorf("missing match line header: %s", v)
-	}
-	if !strings.Contains(v, "/Users/chaomai/Downloads/test") {
-		t.Errorf("missing match line content: %s", v)
-	}
-	if !strings.Contains(v, "before line content") {
-		t.Errorf("missing before context: %s", v)
-	}
-	if !strings.Contains(v, "after line content") {
-		t.Errorf("missing after context: %s", v)
-	}
-}
-
 func TestPreview_SetExpandedMatch(t *testing.T) {
 	p := NewPreview(80, 20)
 	p.SetMeta(session.Meta{ID: "sess-x", Enriched: true})

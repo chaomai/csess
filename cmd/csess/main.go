@@ -121,7 +121,8 @@ func main() {
 }
 
 // bridgeEnrich runs Scanner.EnrichAll and forwards each EnrichMsg to the
-// tea.Program via p.Send.
+// tea.Program via p.Send. A final EnrichDoneMsg is sent once all metas
+// have been forwarded, so the UI can re-sort by UpdatedAt.
 func bridgeEnrich(p *tea.Program, s *session.Scanner, metas []session.Meta) {
 	ch := make(chan session.Meta, 16)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -137,6 +138,7 @@ func bridgeEnrich(p *tea.Program, s *session.Scanner, metas []session.Meta) {
 		select {
 		case m, ok := <-ch:
 			if !ok {
+				p.Send(ui.EnrichDoneMsg{})
 				return
 			}
 			p.Send(ui.EnrichMsg{Meta: m})
@@ -147,6 +149,7 @@ func bridgeEnrich(p *tea.Program, s *session.Scanner, metas []session.Meta) {
 				case m := <-ch:
 					p.Send(ui.EnrichMsg{Meta: m})
 				default:
+					p.Send(ui.EnrichDoneMsg{})
 					return
 				}
 			}

@@ -61,6 +61,14 @@ func Run(ctx context.Context, opts Options) ([]Match, error) {
 	args := []string{
 		"--json",
 		"-F",
+		"-i",
+		// Match only session jsonl files. Claude stores auxiliary content
+		// under each project dir (tool-results/*.txt, subagents/*.jsonl,
+		// memory/...) — none of those correspond to entries in the top-
+		// level session scan, so matches from them would surface as
+		// orphan rows in the match list.
+		"-g", "*.jsonl",
+		"-g", "!**/subagents/**",
 		fmt.Sprintf("-C%d", opts.Context),
 		"--",
 		opts.Query,

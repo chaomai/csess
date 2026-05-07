@@ -25,8 +25,6 @@ var (
 	previewRoleUser   = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Bold(true)      // blue
 	previewRoleAsst   = lipgloss.NewStyle().Foreground(lipgloss.Color("5")).Bold(true)      // magenta
 	previewSep        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                 // dim
-	previewMatchLine  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)      // yellow bold — match highlight
-	previewCtxLine    = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))                 // dim — context lines
 )
 
 type Preview struct {
@@ -216,44 +214,6 @@ func fmtTime(t time.Time) string {
 		return "—"
 	}
 	return t.Format("2006-01-02 15:04:05")
-}
-
-// SetMatchContext renders the session header plus a context snippet around
-// match. It does not touch p.turns. Call this when navigating the match list
-// to give a quick-look preview.
-func (p *Preview) SetMatchContext(m session.Meta, match search.Match) {
-	p.meta = m
-	p.turns = nil
-	p.expanded = false
-
-	var b strings.Builder
-	b.WriteString(p.header())
-	b.WriteString("\n")
-	b.WriteString(previewSep.Render(strings.Repeat("─", maxInt(10, p.width-2))))
-	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("match at line %d:\n", match.LineNo))
-
-	for _, bl := range match.Before {
-		label := fmt.Sprintf("  %d-  ", match.LineNo-len(match.Before))
-		wrapped := ansi.Wordwrap(bl, maxInt(p.width-len(label), 10), " ,.-")
-		b.WriteString(previewCtxLine.Render(label + wrapped))
-		b.WriteString("\n")
-	}
-
-	matchLabel := fmt.Sprintf("  %d   ", match.LineNo)
-	matchWrapped := ansi.Wordwrap(match.Line, maxInt(p.width-len(matchLabel), 10), " ,.-")
-	b.WriteString(previewMatchLine.Render(matchLabel+">>> "+matchWrapped+" <<<"))
-	b.WriteString("\n")
-
-	for i, al := range match.After {
-		label := fmt.Sprintf("  %d+%d  ", match.LineNo, i+1)
-		wrapped := ansi.Wordwrap(al, maxInt(p.width-len(matchLabel), 10), " ,.-")
-		b.WriteString(previewCtxLine.Render(label + wrapped))
-		b.WriteString("\n")
-	}
-
-	p.vp.SetContent(b.String())
-	p.vp.GotoTop()
 }
 
 // SetExpandedMatch switches the preview to full-transcript mode for the

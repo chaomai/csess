@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"csess/internal/search"
@@ -71,7 +72,9 @@ func (ml *MatchList) Update(msg tea.Msg) (*MatchList, tea.Cmd) {
 
 func (ml *MatchList) View() string {
 	if len(ml.items) == 0 {
-		return listDimStyle.Render("no matches")
+		// Pad to pane width so JoinHorizontal in the parent doesn't
+		// collapse the left column to the length of "no matches".
+		return lipgloss.NewStyle().Width(ml.width).Render(listDimStyle.Render("no matches"))
 	}
 	height := ml.height
 	if height <= 0 {

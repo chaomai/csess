@@ -155,7 +155,156 @@ func TestApp_SearchEnterResumesDirectly(t *testing.T) {
 	}
 }
 
-// TestApp_SearchEscExitsSearch verifies Esc exits search mode directly.
+// TestApp_EnrichDoneMsgResortsByUpdatedAt reproduces the bug where the
+// list was stuck in ModTime order until a search+exit cycle triggered an
+// implicit resort via applyFilter. After EnrichDoneMsg, the list must be
+// sorted by UpdatedAt with the selected session (by ID) preserved.
+func TestApp_EnrichDoneMsgResortsByUpdatedAt(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	// Scan: ordered by ModTime desc (matches what scanner.Quick does).
+	// UpdatedAt disagrees — "b" has the newest UpdatedAt despite oldest ModTime.
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "a", ModTime: time.Unix(300, 0)},
+		{ID: "b", ModTime: time.Unix(200, 0)},
+		{ID: "c", ModTime: time.Unix(100, 0)},
+	}})
+
+	// Sanity: before enrichment, order follows ModTime (a, b, c).
+	if got := app.list.Items()[0].ID; got != "a" {
+		t.Fatalf("pre-enrich head = %q; want a (ModTime order)", got)
+	}
+
+	// Enrich: UpdatedAt order will be b > c > a.
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "a", ModTime: time.Unix(300, 0), UpdatedAt: time.Unix(10, 0), Enriched: true}})
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "b", ModTime: time.Unix(200, 0), UpdatedAt: time.Unix(900, 0), Enriched: true}})
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "c", ModTime: time.Unix(100, 0), UpdatedAt: time.Unix(500, 0), Enriched: true}})
+
+	// Still in ModTime order — ReplaceItem deliberately does not re-sort.
+	if got := app.list.Items()[0].ID; got != "a" {
+		t.Fatalf("post-enrich head before Done = %q; want a (still ModTime order)", got)
+	}
+
+	// EnrichDoneMsg triggers the resort.
+	app.Update(EnrichDoneMsg{})
+
+	items := app.list.Items()
+	want := []string{"b", "c", "a"}
+	for i, w := range want {
+		if items[i].ID != w {
+			t.Errorf("items[%d] = %q; want %q (UpdatedAt order)", i, items[i].ID, w)
+		}
+	}
+}
+
+// TestApp_EnrichDoneMsgPreservesCursorByID verifies the cursor follows the
+// selected session across the post-enrichment resort.
+func TestApp_EnrichDoneMsgPreservesCursorByID(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "a", ModTime: time.Unix(300, 0)},
+		{ID: "b", ModTime: time.Unix(200, 0)},
+		{ID: "c", ModTime: time.Unix(100, 0)},
+	}})
+
+	// Move cursor to "b" (index 1 pre-resort).
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if sel, _ := app.list.Selected(); sel.ID != "b" {
+		t.Fatalf("selected = %q; want b", sel.ID)
+	}
+
+	// Enrich so post-sort order becomes c, b, a (UpdatedAt desc).
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "a", ModTime: time.Unix(300, 0), UpdatedAt: time.Unix(10, 0), Enriched: true}})
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "b", ModTime: time.Unix(200, 0), UpdatedAt: time.Unix(500, 0), Enriched: true}})
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "c", ModTime: time.Unix(100, 0), UpdatedAt: time.Unix(900, 0), Enriched: true}})
+	app.Update(EnrichDoneMsg{})
+
+	// Cursor must still select "b", now at index 1 (c, b, a).
+	sel, ok := app.list.Selected()
+	if !ok || sel.ID != "b" {
+		t.Errorf("post-resort selected = %q (ok=%v); want b", sel.ID, ok)
+	}
+}
+
+// TestApp_EnrichDoneMsgPreservesPreviewTurns guards against a regression
+// where the resort handler called updatePreviewFromSelection, whose
+// SetMeta clears the loaded transcript. Since Resort() preserves cursor
+// by ID, the preview must be left alone.
+func TestApp_EnrichDoneMsgPreservesPreviewTurns(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "a", ModTime: time.Unix(300, 0)},
+		{ID: "b", ModTime: time.Unix(200, 0)},
+	}})
+
+	// Simulate a transcript turn landing for the selected session.
+	app.preview.AddTurn(session.Turn{Role: "user", Text: "hello-transcript"})
+	if !strings.Contains(app.preview.View(), "hello-transcript") {
+		t.Fatalf("precondition: turn should be in preview view")
+	}
+
+	// Enrich + Done re-sorts the list. Selected session ("a") moves
+	// position but preview should retain the turn.
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "a", UpdatedAt: time.Unix(10, 0), Enriched: true}})
+	app.Update(EnrichMsg{Meta: session.Meta{ID: "b", UpdatedAt: time.Unix(900, 0), Enriched: true}})
+	app.Update(EnrichDoneMsg{})
+
+	if !strings.Contains(app.preview.View(), "hello-transcript") {
+		t.Errorf("preview lost transcript turn after EnrichDoneMsg resort")
+	}
+}
+
+// TestApp_MatchSelectionRendersFullTranscript verifies that selecting a
+// match in search mode loads the parent session's transcript and the
+// matched line is highlighted with ▶▶▶. Visual parity with non-search
+// session preview.
+func TestApp_MatchSelectionRendersFullTranscript(t *testing.T) {
+	// LoadTranscript that returns a canned transcript for any session.
+	loadFn := func(seq int, m session.Meta, ctx context.Context) tea.Cmd {
+		return func() tea.Msg {
+			return BatchTurnsMsg{Seq: seq, Turns: []session.Turn{
+				{Role: "user", Text: "hello", LineNo: 3},
+				{Role: "assistant", Text: "matched content", LineNo: 5},
+				{Role: "user", Text: "followup", LineNo: 6},
+			}}
+		}
+	}
+
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: loadFn})
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "abc123", Path: "/fake/abc123.jsonl", Enriched: true, CWD: "/work"},
+	}})
+
+	// Enter search, inject a match whose LineNo targets the assistant turn.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	match := search.Match{
+		SessionID: "abc123",
+		FilePath:  "/fake/abc123.jsonl",
+		LineNo:    5,
+		Line:      `{"type":"assistant","content":"matched content"}`,
+	}
+	_, cmd := app.Update(searchResultsMsg{query: app.search.Query(), matches: []search.Match{match}})
+	if cmd == nil {
+		t.Fatal("searchResultsMsg should return a LoadTranscript cmd for match preview")
+	}
+
+	// Execute the cmd to get BatchTurnsMsg, then deliver it.
+	app.Update(cmd())
+
+	v := app.preview.View()
+	if !strings.Contains(v, "hello") {
+		t.Errorf("preview should render full transcript (missing 'hello'): %s", v)
+	}
+	if !strings.Contains(v, "matched content") {
+		t.Errorf("preview should render matched turn body: %s", v)
+	}
+	if !strings.Contains(v, "followup") {
+		t.Errorf("preview should render surrounding turns: %s", v)
+	}
+	if !strings.Contains(v, "▶▶▶") {
+		t.Errorf("matched turn should be marked with ▶▶▶: %s", v)
+	}
+}
+
 func TestApp_SearchEscExitsSearch(t *testing.T) {
 	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
 	app.Update(ScanMsg{Metas: []session.Meta{

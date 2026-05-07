@@ -55,13 +55,32 @@ func (l *List) rebuildIndex() {
 }
 
 // ReplaceItem updates the Meta for the given ID in place. It does NOT
-// re-sort the list: initial ModTime order is a close-enough stand-in for
-// UpdatedAt order, and re-sorting on every enrich message (which arrive
-// per-session at O(n)) would choke the Update loop.
+// re-sort the list — re-sorting on every enrich message (O(n) of them)
+// would choke the Update loop. A single Resort() at the end of the
+// enrichment pass brings the list to UpdatedAt order.
 func (l *List) ReplaceItem(m session.Meta) {
 	if i, ok := l.idIndex[m.ID]; ok && i < len(l.items) {
 		l.items[i] = m
 	}
+}
+
+// Resort re-sorts items by the current sort key, preserving the selected
+// item by ID so the cursor follows the session rather than the index.
+// Intended for use after enrichment completes, when UpdatedAt becomes
+// available and the initial ModTime ordering may no longer match.
+func (l *List) Resort() {
+	var selID string
+	if sel, ok := l.Selected(); ok {
+		selID = sel.ID
+	}
+	l.resort()
+	l.rebuildIndex()
+	if selID != "" {
+		if i, ok := l.idIndex[selID]; ok {
+			l.cursor = i
+		}
+	}
+	l.ensureVisible()
 }
 
 func (l *List) Items() []session.Meta { return l.items }
@@ -116,7 +135,9 @@ func (l *List) Update(msg tea.Msg) (*List, tea.Cmd) {
 
 func (l *List) View() string {
 	if len(l.items) == 0 {
-		return listDimStyle.Render("no sessions")
+		// Pad to pane width so JoinHorizontal in the parent doesn't
+		// collapse the left column to the length of "no sessions".
+		return lipgloss.NewStyle().Width(l.width).Render(listDimStyle.Render("no sessions"))
 	}
 	height := l.height
 	if height <= 0 {
