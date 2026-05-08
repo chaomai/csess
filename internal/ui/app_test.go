@@ -497,3 +497,43 @@ func TestApp_BookmarkEnrichMsgReplacesStub(t *testing.T) {
 		t.Errorf("after enrich: items[0] = %+v; want FirstPrompt=filled in", items[0])
 	}
 }
+
+func TestApp_DeleteBookmarkedSessionAutoUnbookmarks(t *testing.T) {
+	var savedAfter []session.Bookmark
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			savedAfter = bs
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/w"}}})
+	// Bookmark "a".
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	// Clear saved slot so we only see the post-delete save.
+	savedAfter = nil
+	_, cmd := app.Update(DeleteDoneMsg{ID: "a"})
+	if cmd == nil {
+		t.Fatal("DeleteDoneMsg for bookmarked id should return a SaveBookmarks cmd")
+	}
+	// The cmd is a Batch; execute it to fire the SaveBookmarks sub-cmd.
+	if msg := cmd(); msg != nil {
+		// Batch cmd may return a BatchMsg containing further cmds; execute them.
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				if sub != nil {
+					sub()
+				}
+			}
+		}
+	}
+	if _, ok := app.bookmarkIDs["a"]; ok {
+		t.Error("bookmarkIDs still contains 'a' after delete")
+	}
+	if len(app.bookmarks.Items()) != 0 {
+		t.Errorf("bookmarks items = %d; want 0", len(app.bookmarks.Items()))
+	}
+	if len(savedAfter) != 0 {
+		t.Errorf("savedAfter = %+v; want empty", savedAfter)
+	}
+}

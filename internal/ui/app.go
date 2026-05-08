@@ -301,11 +301,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i, it := range keep {
 			a.allIndex[it.ID] = i
 		}
+		var bookmarkSaveCmd tea.Cmd
+		if _, existed := a.bookmarkIDs[m.ID]; existed {
+			delete(a.bookmarkIDs, m.ID)
+			a.bookmarks.Remove(m.ID)
+			bookmarkSaveCmd = a.saveBookmarksCmd()
+		}
 		a.applyFilter()
-		a.updatePreviewFromSelection()
+		a.updatePreviewFromFocus()
 		a.banner = "deleted " + m.ID
 		a.bannerExp = time.Now().Add(3 * time.Second)
-		return a, a.loadTranscriptForSelection()
+		return a, tea.Batch(a.loadTranscriptForFocus(), bookmarkSaveCmd)
 
 	case tea.KeyMsg:
 		return a.handleKey(m)
