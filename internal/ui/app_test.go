@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"csess/internal/search"
 	"csess/internal/session"
@@ -579,6 +580,42 @@ func TestApp_SearchPreservesPriorFocus(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
 	if app.focus != focusBookmarks {
 		t.Errorf("after esc: focus = %d; want focusBookmarks (restored)", app.focus)
+	}
+}
+
+// TestApp_SearchEscRefreshesPreviewFromRestoredFocus covers the bug
+// where esc from search restored focusBookmarks but left the preview
+// showing the list's selection. After esc, the preview meta must
+// reflect the focused pane's cursor.
+func TestApp_SearchEscRefreshesPreviewFromRestoredFocus(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "list-item", FirstPrompt: "from list"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1", FirstPrompt: "from bookmark"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	v := app.preview.View()
+	if !strings.Contains(v, "bm1") {
+		t.Errorf("preview after esc should show bookmarked session header (bm1); got: %q", v)
+	}
+}
+
+// TestApp_WindowSizeMsgResizesBookmarksPane covers the bug where
+// WindowSizeMsg never updated the bookmarks pane's width, leaving it
+// stuck at the startup value.
+func TestApp_WindowSizeMsgResizesBookmarksPane(t *testing.T) {
+	app := NewApp(AppConfig{Width: 80, Height: 20, LoadTranscript: stubLoad})
+	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	// Empty pane renders the "no bookmarks" hint padded to the pane's
+	// width. A stale width would produce an 80-char line.
+	v := app.bookmarks.View()
+	first := strings.Split(v, "\n")[0]
+	if got := ansi.StringWidth(first); got < 160 {
+		t.Errorf("bookmarks pane width after resize = %d; want >= 160", got)
 	}
 }
 

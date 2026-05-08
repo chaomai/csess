@@ -196,9 +196,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.cfg.Width, a.cfg.Height = m.Width, m.Height
 		listW, prevW := splitWidth(m.Width)
-		a.list.SetSize(listW, m.Height-2)
-		a.matchList.SetSize(listW, m.Height-2)
-		a.preview.SetSize(prevW, m.Height-2)
+		// Split vertical space between bookmarks pane (up to ~1/2 height,
+		// min 3 when non-empty) and the list/preview body. The status
+		// line takes 1 row.
+		bmCap := (m.Height - 2) / 2
+		if bmCap < 3 {
+			bmCap = 3
+		}
+		bmH := a.bookmarks.DesiredHeight(bmCap)
+		bodyH := m.Height - 2 - bmH
+		if bodyH < 1 {
+			bodyH = 1
+		}
+		a.bookmarks.SetSize(m.Width, bmH)
+		a.list.SetSize(listW, bodyH)
+		a.matchList.SetSize(listW, bodyH)
+		a.preview.SetSize(prevW, bodyH)
 		return a, nil
 
 	case ScanMsg:
@@ -354,7 +367,8 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.searchCancel()
 			a.applyFilter()
 			a.focus = a.prevFocus
-			return a, nil
+			a.updatePreviewFromFocus()
+			return a, a.loadTranscriptForFocus()
 
 		case "up", "down", "ctrl+p", "ctrl+n":
 			if a.showMatches {
