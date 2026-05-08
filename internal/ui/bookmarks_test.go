@@ -93,3 +93,93 @@ func TestBookmarksPane_DesiredHeightCapsAtMax(t *testing.T) {
 		t.Errorf("DesiredHeight(50) with 20 items = %d; want 20", got)
 	}
 }
+
+func TestBookmarksPane_AddInsertsAtSortedPosition(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	p.SetItems(
+		[]session.Meta{{ID: "old"}, {ID: "mid"}},
+		map[string]time.Time{"old": time.Unix(100, 0), "mid": time.Unix(200, 0)},
+	)
+	p.Add(session.Meta{ID: "new"}, time.Unix(300, 0))
+	got := p.Items()
+	want := []string{"new", "mid", "old"}
+	for i, id := range want {
+		if got[i].ID != id {
+			t.Errorf("items[%d] = %q; want %q", i, got[i].ID, id)
+		}
+	}
+}
+
+func TestBookmarksPane_AddPreservesCursorByID(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	p.SetItems(
+		[]session.Meta{{ID: "a"}, {ID: "b"}},
+		map[string]time.Time{"a": time.Unix(200, 0), "b": time.Unix(100, 0)},
+	)
+	// Cursor on "b" (index 1).
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if sel, _ := p.Selected(); sel.ID != "b" {
+		t.Fatalf("precondition: selected = %q; want b", sel.ID)
+	}
+	// Add newer bookmark — goes to index 0, "b" shifts to index 2.
+	p.Add(session.Meta{ID: "c"}, time.Unix(300, 0))
+	if sel, _ := p.Selected(); sel.ID != "b" {
+		t.Errorf("after Add: selected = %q; want b", sel.ID)
+	}
+}
+
+func TestBookmarksPane_RemoveDropsByID(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	p.SetItems(
+		[]session.Meta{{ID: "a"}, {ID: "b"}, {ID: "c"}},
+		map[string]time.Time{
+			"a": time.Unix(300, 0), "b": time.Unix(200, 0), "c": time.Unix(100, 0),
+		},
+	)
+	p.Remove("b")
+	got := p.Items()
+	if len(got) != 2 || got[0].ID != "a" || got[1].ID != "c" {
+		t.Errorf("after Remove(b) = %+v; want [a, c]", idsOf(got))
+	}
+	if _, ok := p.IDIndex()["b"]; ok {
+		t.Error("idIndex still has 'b' after Remove")
+	}
+}
+
+func TestBookmarksPane_RemoveAdjustsCursor(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	p.SetItems(
+		[]session.Meta{{ID: "a"}, {ID: "b"}, {ID: "c"}},
+		map[string]time.Time{
+			"a": time.Unix(300, 0), "b": time.Unix(200, 0), "c": time.Unix(100, 0),
+		},
+	)
+	// Cursor on "c" (index 2).
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	// Remove "a" — cursor should move to index 1 (still "c").
+	p.Remove("a")
+	if sel, _ := p.Selected(); sel.ID != "c" {
+		t.Errorf("selected after Remove(a) = %q; want c", sel.ID)
+	}
+}
+
+func TestBookmarksPane_ReplaceItemUpdatesInPlace(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	p.SetItems(
+		[]session.Meta{{ID: "a"}},
+		map[string]time.Time{"a": time.Unix(100, 0)},
+	)
+	p.ReplaceItem(session.Meta{ID: "a", FirstPrompt: "updated", Enriched: true})
+	got := p.Items()
+	if got[0].FirstPrompt != "updated" {
+		t.Errorf("FirstPrompt = %q; want updated", got[0].FirstPrompt)
+	}
+}
+
+func idsOf(metas []session.Meta) []string {
+	out := make([]string, len(metas))
+	for i, m := range metas {
+		out[i] = m.ID
+	}
+	return out
+}

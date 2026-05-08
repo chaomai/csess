@@ -168,6 +168,62 @@ func (p *BookmarksPane) rebuildIndex() {
 	}
 }
 
+// Add inserts or replaces a bookmark entry. Cursor tracks the selected
+// session by ID across the resulting re-sort.
+func (p *BookmarksPane) Add(m session.Meta, starredAt time.Time) {
+	selID := ""
+	if sel, ok := p.Selected(); ok {
+		selID = sel.ID
+	}
+	if i, exists := p.idIndex[m.ID]; exists {
+		p.items[i] = m
+	} else {
+		p.items = append(p.items, m)
+	}
+	p.starredAt[m.ID] = starredAt
+	p.sortItems()
+	p.rebuildIndex()
+	if i, ok := p.idIndex[selID]; ok {
+		p.cursor = i
+	}
+	p.ensureVisible()
+}
+
+// Remove drops the entry by ID. Cursor stays on the same session (if
+// still present) or clamps into the remaining range.
+func (p *BookmarksPane) Remove(id string) {
+	i, ok := p.idIndex[id]
+	if !ok {
+		return
+	}
+	selID := ""
+	if sel, ok := p.Selected(); ok && sel.ID != id {
+		selID = sel.ID
+	}
+	p.items = append(p.items[:i], p.items[i+1:]...)
+	delete(p.starredAt, id)
+	p.rebuildIndex()
+	if selID != "" {
+		if j, ok := p.idIndex[selID]; ok {
+			p.cursor = j
+		}
+	} else if p.cursor >= len(p.items) {
+		p.cursor = maxInt(0, len(p.items)-1)
+	}
+	p.ensureVisible()
+}
+
+// ReplaceItem updates the Meta for an existing bookmarked ID in place
+// without changing its position. Used by BookmarkEnrichMsg.
+func (p *BookmarksPane) ReplaceItem(m session.Meta) {
+	if i, ok := p.idIndex[m.ID]; ok && i < len(p.items) {
+		p.items[i] = m
+	}
+}
+
+// IDIndex exposes the id→index map for tests. Callers must not mutate.
+func (p *BookmarksPane) IDIndex() map[string]int { return p.idIndex }
+
 func (p *BookmarksPane) ensureVisible() {
 	height := p.height
 	if height <= 0 {
