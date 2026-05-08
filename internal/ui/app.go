@@ -584,7 +584,7 @@ func (a *App) statusLine() string {
 	default:
 		n := len(a.list.Items())
 		parts = append(parts, fmt.Sprintf("%d sessions", n))
-		parts = append(parts, "[/] filter  [Enter] resume  [y] copy id  [d] delete  [q] quit")
+		parts = append(parts, "[/] filter  [b] bookmark  [^K/^J] focus  [Enter] resume  [y] copy id  [d] delete  [q] quit")
 	}
 	if a.banner != "" && time.Now().Before(a.bannerExp) {
 		parts = append(parts, "· "+a.banner)
