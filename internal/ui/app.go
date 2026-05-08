@@ -441,7 +441,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// modeNormal
 	switch km.String() {
 	case "ctrl+k":
-		if len(a.bookmarks.Items()) == 0 {
+		if a.focus == focusBookmarks || len(a.bookmarks.Items()) == 0 {
 			return a, nil
 		}
 		a.focus = focusBookmarks
@@ -449,6 +449,9 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.updatePreviewFromFocus()
 		return a, a.loadTranscriptForFocus()
 	case "ctrl+j":
+		if a.focus == focusList {
+			return a, nil
+		}
 		a.focus = focusList
 		a.applyFocus()
 		a.updatePreviewFromFocus()

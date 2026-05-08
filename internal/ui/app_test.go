@@ -350,9 +350,47 @@ func TestApp_CtrlKEmptyBookmarksIsNoop(t *testing.T) {
 	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
 	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
 	// bookmarks pane is empty by default.
-	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
 	if app.focus != focusList {
 		t.Errorf("focus after Ctrl-K with empty bookmarks = %d; want focusList", app.focus)
+	}
+	if cmd != nil {
+		t.Error("Ctrl-K with empty bookmarks should return nil cmd (no preview reload)")
+	}
+}
+
+// TestApp_CtrlJOnListIsNoop — Ctrl-J with focus already on the list
+// must NOT trigger preview.SetMeta + transcript reload; otherwise the
+// preview flickers on every Ctrl-J press.
+func TestApp_CtrlJOnListIsNoop(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	// focus is focusList by default.
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if app.focus != focusList {
+		t.Errorf("focus = %d; want focusList", app.focus)
+	}
+	if cmd != nil {
+		t.Error("Ctrl-J on focusList should return nil cmd (no preview reload)")
+	}
+}
+
+// TestApp_CtrlKOnBookmarksIsNoop — Ctrl-K with focus already on
+// bookmarks must not redundantly reload the preview.
+func TestApp_CtrlKOnBookmarksIsNoop(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK}) // list → bookmarks
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlK}) // redundant
+	if app.focus != focusBookmarks {
+		t.Errorf("focus = %d; want focusBookmarks", app.focus)
+	}
+	if cmd != nil {
+		t.Error("redundant Ctrl-K on focusBookmarks should return nil cmd")
 	}
 }
 
