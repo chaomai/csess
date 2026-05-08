@@ -700,6 +700,13 @@ func (a *App) saveBookmarksCmd() tea.Cmd {
 	return a.cfg.SaveBookmarks(bs)
 }
 
+// SetBookmark seeds a bookmark from the persisted store during startup.
+// Does not trigger Save (nothing has changed on disk). Callers must call
+// it BEFORE the initial ScanMsg is dispatched.
+func (a *App) SetBookmark(id string, starredAt time.Time) {
+	a.bookmarkIDs[id] = starredAt
+}
+
 // seedBookmarks populates the bookmarks pane from a.bookmarkIDs after a
 // ScanMsg. Known ids (in allIndex) get their full Meta; off-scope ids
 // get a stub Meta{ID:id} that BookmarkEnrichMsg will later replace.

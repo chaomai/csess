@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,11 +23,12 @@ import (
 
 func main() {
 	var (
-		hereFlag    = flag.Bool("here", false, "only show sessions for the current directory (default: all projects)")
-		projectsDir = flag.String("projects-dir", "", "override ~/.claude/projects")
-		trashDir    = flag.String("trash-dir", "", "override ~/.claude/.trash")
-		contextN    = flag.Int("context", 3, "lines of context around each match in the context preview")
-		maxMatches  = flag.Int("max-matches", 1000, "per-file match cap passed to rg (--max-count)")
+		hereFlag      = flag.Bool("here", false, "only show sessions for the current directory (default: all projects)")
+		projectsDir   = flag.String("projects-dir", "", "override ~/.claude/projects")
+		trashDir      = flag.String("trash-dir", "", "override ~/.claude/.trash")
+		bookmarksFile = flag.String("bookmarks-file", "", "override ~/.claude/csess/bookmarks.json")
+		contextN      = flag.Int("context", 3, "lines of context around each match in the context preview")
+		maxMatches    = flag.Int("max-matches", 1000, "per-file match cap passed to rg (--max-count)")
 	)
 	flag.Parse()
 
@@ -39,6 +41,15 @@ func main() {
 	}
 	if *trashDir == "" {
 		*trashDir = filepath.Join(home, ".claude", ".trash")
+	}
+	if *bookmarksFile == "" {
+		*bookmarksFile = filepath.Join(home, ".claude", "csess", "bookmarks.json")
+	}
+	bookmarkStore := session.NewBookmarkStore(*bookmarksFile)
+	bookmarks, loadErr := bookmarkStore.Load()
+	if loadErr != nil {
+		fmt.Fprintf(os.Stderr, "bookmarks load: %v (continuing with empty set)\n", loadErr)
+		bookmarks = nil
 	}
 
 	cwd, err := os.Getwd()
@@ -98,14 +109,20 @@ func main() {
 		CopySelected:   buildCopy(clip),
 		TrashSelected:  buildTrash(*trashDir),
 		RunSearch:      buildRunSearch(rgRunner),
+		SaveBookmarks:  buildSaveBookmarks(bookmarkStore),
 	}
 	app := ui.NewApp(cfg)
+
+	for _, b := range bookmarks {
+		app.SetBookmark(b.ID, b.StarredAt)
+	}
 
 	p := tea.NewProgram(app, tea.WithAltScreen())
 	// Send the initial scan synthetically.
 	go p.Send(ui.ScanMsg{Metas: metas})
 	// Bridge enrich messages into the program.
 	go bridgeEnrich(p, scanner, metas)
+	go bridgeBookmarkEnrich(p, *projectsDir, bookmarks, metas)
 
 	if _, err := p.Run(); err != nil {
 		fatal("tui: %v", err)
@@ -242,5 +259,71 @@ func buildRunSearch(opts *search.Options) func(ctx context.Context, query string
 		o := *opts // copy so each call can have its own query
 		o.Query = query
 		return search.Run(ctx, o)
+	}
+}
+
+func buildSaveBookmarks(store *session.BookmarkStore) func([]session.Bookmark) tea.Cmd {
+	return func(bs []session.Bookmark) tea.Cmd {
+		return func() tea.Msg {
+			return ui.SaveBookmarksDoneMsg{Err: store.Save(bs)}
+		}
+	}
+}
+
+// bridgeBookmarkEnrich enriches any bookmarked id that isn't already in
+// the main scan (off-scope — different project than the current scope).
+// It walks project dirs under projectsDir looking for <id>.jsonl; on
+// hit, it runs ExtractMeta and sends BookmarkEnrichMsg; on miss, it
+// sends a stub with LoadErr=ErrMissing so the UI can mark the row.
+func bridgeBookmarkEnrich(p *tea.Program, projectsDir string, bookmarks []session.Bookmark, scanned []session.Meta) {
+	if len(bookmarks) == 0 {
+		return
+	}
+	inScope := make(map[string]struct{}, len(scanned))
+	for _, m := range scanned {
+		inScope[m.ID] = struct{}{}
+	}
+	// Pre-walk all project dirs to build id -> path.
+	paths := map[string]string{}
+	projEntries, err := os.ReadDir(projectsDir)
+	if err == nil {
+		for _, pe := range projEntries {
+			if !pe.IsDir() {
+				continue
+			}
+			dir := filepath.Join(projectsDir, pe.Name())
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				continue
+			}
+			for _, f := range files {
+				if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+					continue
+				}
+				id := strings.TrimSuffix(f.Name(), ".jsonl")
+				paths[id] = filepath.Join(dir, f.Name())
+			}
+		}
+	}
+	for _, b := range bookmarks {
+		if _, ok := inScope[b.ID]; ok {
+			continue // ScanMsg already supplied full Meta
+		}
+		path, ok := paths[b.ID]
+		if !ok {
+			p.Send(ui.BookmarkEnrichMsg{Meta: session.Meta{ID: b.ID, LoadErr: session.ErrMissing}})
+			continue
+		}
+		meta := session.Meta{ID: b.ID, Path: path}
+		f, err := os.Open(path)
+		if err != nil {
+			p.Send(ui.BookmarkEnrichMsg{Meta: session.Meta{ID: b.ID, LoadErr: session.ErrMissing}})
+			continue
+		}
+		if err := session.ExtractMeta(f, &meta); err != nil && meta.LoadErr == nil {
+			meta.LoadErr = err
+		}
+		f.Close()
+		p.Send(ui.BookmarkEnrichMsg{Meta: meta})
 	}
 }
