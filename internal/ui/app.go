@@ -195,23 +195,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.cfg.Width, a.cfg.Height = m.Width, m.Height
-		listW, prevW := splitWidth(m.Width)
-		// Layout reserves rows for: status (1), body↔status divider (1),
-		// and when bookmarks pane is visible, bookmarks↔body divider (1).
-		// Bookmarks pane takes up to ~1/2 height (min 3 when non-empty).
-		bmCap := (m.Height - 3) / 2
-		if bmCap < 3 {
-			bmCap = 3
-		}
-		bmH := a.bookmarks.DesiredHeight(bmCap)
-		bodyH := m.Height - 3 - bmH
-		if bodyH < 1 {
-			bodyH = 1
-		}
-		a.bookmarks.SetSize(m.Width, bmH)
-		a.list.SetSize(listW, bodyH)
-		a.matchList.SetSize(listW, bodyH)
-		a.preview.SetSize(prevW, bodyH)
+		a.relayout()
 		return a, nil
 
 	case ScanMsg:
@@ -222,6 +206,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.list.SetItems(m.Metas)
 		a.seedBookmarks()
+		a.relayout()
 		a.updatePreviewFromFocus()
 		return a, a.loadTranscriptForFocus()
 
@@ -320,6 +305,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			delete(a.bookmarkIDs, m.ID)
 			a.bookmarks.Remove(m.ID)
 			bookmarkSaveCmd = a.saveBookmarksCmd()
+			a.relayout()
 		}
 		a.applyFilter()
 		a.updatePreviewFromFocus()
@@ -494,6 +480,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.bookmarkIDs[sel.ID] = now
 			a.bookmarks.Add(sel, now)
 		}
+		a.relayout()
 		return a, a.saveBookmarksCmd()
 	case "enter":
 		sel, ok := a.focusedSelection()
@@ -579,7 +566,9 @@ func (a *App) View() string {
 		left = a.list.View()
 	}
 	right := a.preview.View()
-	body := lipgloss.JoinHorizontal(lipgloss.Top, left, lipgloss.NewStyle().Padding(0, 1).Render("│"), right)
+	// Multi-line vertical divider sized to the body's height.
+	vDiv := a.verticalDivider(left)
+	body := lipgloss.JoinHorizontal(lipgloss.Top, left, vDiv, right)
 
 	status := a.statusLine()
 	hDiv := a.horizontalDivider()
@@ -598,6 +587,47 @@ func (a *App) horizontalDivider() string {
 		w = 10
 	}
 	return listDimStyle.Render(strings.Repeat("─", w))
+}
+
+// verticalDivider renders a full-height dim rule placed between the
+// list and preview panes. Its height matches the adjacent pane so
+// every row of the body shows a separator (JoinHorizontal by default
+// only places a one-row divider at the top).
+func (a *App) verticalDivider(adjacent string) string {
+	lines := strings.Count(adjacent, "\n") + 1
+	if lines < 1 {
+		lines = 1
+	}
+	col := strings.Repeat("│\n", lines-1) + "│"
+	return lipgloss.NewStyle().Padding(0, 1).Render(listDimStyle.Render(col))
+}
+
+// relayout computes pane sizes given the current window size and the
+// bookmarks pane's current content, then pushes the result into every
+// pane via SetSize. Called from WindowSizeMsg and from any handler
+// that changes the number of bookmarks (b toggle, DeleteDoneMsg,
+// ScanMsg's seed). Skips work if no window size is known yet.
+func (a *App) relayout() {
+	if a.cfg.Width <= 0 || a.cfg.Height <= 0 {
+		return
+	}
+	listW, prevW := splitWidth(a.cfg.Width)
+	// Layout reserves rows for: status (1), body↔status divider (1),
+	// and when bookmarks pane is visible, bookmarks↔body divider (1).
+	// Bookmarks pane takes up to ~1/2 height (min 3 when non-empty).
+	bmCap := (a.cfg.Height - 3) / 2
+	if bmCap < 3 {
+		bmCap = 3
+	}
+	bmH := a.bookmarks.DesiredHeight(bmCap)
+	bodyH := a.cfg.Height - 3 - bmH
+	if bodyH < 1 {
+		bodyH = 1
+	}
+	a.bookmarks.SetSize(a.cfg.Width, bmH)
+	a.list.SetSize(listW, bodyH)
+	a.matchList.SetSize(listW, bodyH)
+	a.preview.SetSize(prevW, bodyH)
 }
 
 func (a *App) statusLine() string {

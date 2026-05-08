@@ -504,6 +504,34 @@ func TestApp_BKeyAddsToBookmarks(t *testing.T) {
 	}
 }
 
+// TestApp_BKeyGrowsBookmarksPaneHeight guards against the bug where
+// the pane was stuck at 1 row regardless of item count because
+// WindowSizeMsg was the only callsite that recomputed SetSize.
+func TestApp_BKeyGrowsBookmarksPaneHeight(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	// Simulate the real startup flow: window size known, empty pane.
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "a", Enriched: true, CWD: "/w"},
+		{ID: "b", Enriched: true, CWD: "/w"},
+		{ID: "c", Enriched: true, CWD: "/w"},
+	}})
+	// Add three bookmarks one at a time.
+	for _, id := range []string{"a", "b", "c"} {
+		app.list.SetItems([]session.Meta{{ID: id, Enriched: true, CWD: "/w"}})
+		app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	}
+	if got := len(app.bookmarks.Items()); got != 3 {
+		t.Fatalf("bookmarks items = %d; want 3", got)
+	}
+	// The pane's View should now render all three rows — not just one.
+	v := app.bookmarks.View()
+	lines := strings.Count(v, "\n") + 1
+	if lines < 3 {
+		t.Errorf("bookmarks View has %d line(s); want 3+ (pane didn't grow with content)", lines)
+	}
+}
+
 func TestApp_BKeyRemovesExistingBookmark(t *testing.T) {
 	var saved []session.Bookmark
 	app := NewApp(AppConfig{
