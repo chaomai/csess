@@ -367,6 +367,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.searchCancel()
 			a.applyFilter()
 			a.focus = a.prevFocus
+			a.applyFocus()
 			a.updatePreviewFromFocus()
 			return a, a.loadTranscriptForFocus()
 
@@ -444,10 +445,12 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.focus = focusBookmarks
+		a.applyFocus()
 		a.updatePreviewFromFocus()
 		return a, a.loadTranscriptForFocus()
 	case "ctrl+j":
 		a.focus = focusList
+		a.applyFocus()
 		a.updatePreviewFromFocus()
 		return a, a.loadTranscriptForFocus()
 	case "q", "ctrl+c":
@@ -455,6 +458,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		a.prevFocus = a.focus
 		a.focus = focusList
+		a.applyFocus()
 		a.mode = modeSearch
 		return a, a.search.Focus()
 	case "d":
@@ -681,6 +685,14 @@ func (a *App) focusedSelection() (session.Meta, bool) {
 	default:
 		return a.list.Selected()
 	}
+}
+
+// applyFocus pushes a.focus into the pane models so each one can render
+// its cursor row bright (focused) or dim (not focused). Call after any
+// write to a.focus.
+func (a *App) applyFocus() {
+	a.list.SetFocused(a.focus == focusList)
+	a.bookmarks.SetFocused(a.focus == focusBookmarks)
 }
 
 func (a *App) updatePreviewFromFocus() {

@@ -26,6 +26,7 @@ type BookmarksPane struct {
 	idIndex       map[string]int
 	cursor        int
 	firstVisible  int
+	focused       bool
 }
 
 func NewBookmarksPane(w, h int) *BookmarksPane {
@@ -36,6 +37,13 @@ func NewBookmarksPane(w, h int) *BookmarksPane {
 		idIndex:   map[string]int{},
 	}
 }
+
+// SetFocused toggles the visual "this pane has keyboard focus" cue.
+// Mirrors List.SetFocused: bright cursor when focused, dim when not.
+func (p *BookmarksPane) SetFocused(v bool) { p.focused = v }
+
+// Focused reports the pane's current focus state. Exposed for tests.
+func (p *BookmarksPane) Focused() bool { return p.focused }
 
 // SetItems replaces the pane's contents. items and starredAt must
 // cover the same set of ids; items need not be pre-sorted (this
@@ -125,7 +133,11 @@ func (p *BookmarksPane) View() string {
 		globalIdx := p.firstVisible + i
 		row := ansi.Truncate(p.row(m), rowWidth, "…")
 		if globalIdx == p.cursor {
-			b.WriteString(listCursorStyle.Render("▶ " + row))
+			if p.focused {
+				b.WriteString(listCursorStyle.Render("▶ " + row))
+			} else {
+				b.WriteString(listDimStyle.Render("▶ " + row))
+			}
 		} else {
 			b.WriteString("  " + row)
 		}

@@ -195,3 +195,23 @@ func TestBookmarksPane_MissingFileRendersRemovedMarker(t *testing.T) {
 		t.Errorf("missing-file row should show (removed): %q", v)
 	}
 }
+
+// TestBookmarksPane_SetFocusedTogglesState verifies the focus state
+// getter/setter pair. The rendered cursor style in View differs by
+// focus, but lipgloss strips ANSI in the test environment so we verify
+// the state plumbing here; the App-level test confirms SetFocused is
+// called on Ctrl-J/Ctrl-K.
+func TestBookmarksPane_SetFocusedTogglesState(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	if p.Focused() {
+		t.Error("bookmarks pane should default to unfocused")
+	}
+	p.SetFocused(true)
+	if !p.Focused() {
+		t.Error("SetFocused(true) not reflected by Focused()")
+	}
+	p.SetFocused(false)
+	if p.Focused() {
+		t.Error("SetFocused(false) not reflected by Focused()")
+	}
+}

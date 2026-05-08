@@ -30,11 +30,21 @@ type List struct {
 	idIndex       map[string]int // ID -> items[index] for O(1) enrich updates
 	cursor        int
 	firstVisible  int
+	focused       bool
 }
 
 func NewList(width, height int, allMode bool) *List {
-	return &List{width: width, height: height, allMode: allMode, idIndex: map[string]int{}}
+	return &List{width: width, height: height, allMode: allMode, idIndex: map[string]int{}, focused: true}
 }
+
+// SetFocused toggles the visual "this pane has keyboard focus" cue. The
+// cursor row renders bright when focused, dim when not — so the user
+// can see where the cursor will land on refocus without mistaking it
+// for the active selection.
+func (l *List) SetFocused(v bool) { l.focused = v }
+
+// Focused reports the pane's current focus state. Exposed for tests.
+func (l *List) Focused() bool { return l.focused }
 
 func (l *List) SetItems(items []session.Meta) {
 	l.items = items
@@ -155,7 +165,11 @@ func (l *List) View() string {
 		globalIdx := l.firstVisible + i
 		row := ansi.Truncate(l.row(it), rowWidth, "…")
 		if globalIdx == l.cursor {
-			b.WriteString(listCursorStyle.Render("▶ " + row))
+			if l.focused {
+				b.WriteString(listCursorStyle.Render("▶ " + row))
+			} else {
+				b.WriteString(listDimStyle.Render("▶ " + row))
+			}
 		} else {
 			b.WriteString("  " + row)
 		}

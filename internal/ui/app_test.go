@@ -370,6 +370,32 @@ func TestApp_CtrlJReturnsFocusToList(t *testing.T) {
 	}
 }
 
+// TestApp_CtrlKTogglesPaneFocusedState verifies that Ctrl-K/Ctrl-J
+// flips the focused flag on BOTH panes so each renders its cursor with
+// the appropriate brightness.
+func TestApp_CtrlKTogglesPaneFocusedState(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	if !app.list.Focused() || app.bookmarks.Focused() {
+		t.Fatalf("initial: list.Focused=%v bookmarks.Focused=%v; want true/false",
+			app.list.Focused(), app.bookmarks.Focused())
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.list.Focused() || !app.bookmarks.Focused() {
+		t.Errorf("after Ctrl-K: list.Focused=%v bookmarks.Focused=%v; want false/true",
+			app.list.Focused(), app.bookmarks.Focused())
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if !app.list.Focused() || app.bookmarks.Focused() {
+		t.Errorf("after Ctrl-J: list.Focused=%v bookmarks.Focused=%v; want true/false",
+			app.list.Focused(), app.bookmarks.Focused())
+	}
+}
+
 func TestApp_JInFocusBookmarksMovesBookmarkCursor(t *testing.T) {
 	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
 	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
