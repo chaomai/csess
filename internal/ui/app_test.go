@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"csess/internal/search"
 	"csess/internal/session"
@@ -322,5 +323,325 @@ func TestApp_SearchEscExitsSearch(t *testing.T) {
 	}
 	if mm.showMatches {
 		t.Error("showMatches should be false after exiting search")
+	}
+}
+
+func TestApp_CtrlKSwitchesFocusToBookmarks(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	// Manually seed a bookmark so the pane is non-empty.
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusBookmarks {
+		t.Errorf("focus after Ctrl-K = %d; want focusBookmarks", app.focus)
+	}
+	// j should now drive the bookmarks pane, not the list.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if app.list.Cursor() != 0 {
+		t.Errorf("list cursor moved despite focusBookmarks: %d", app.list.Cursor())
+	}
+}
+
+func TestApp_CtrlKEmptyBookmarksIsNoop(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	// bookmarks pane is empty by default.
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusList {
+		t.Errorf("focus after Ctrl-K with empty bookmarks = %d; want focusList", app.focus)
+	}
+}
+
+func TestApp_CtrlJReturnsFocusToList(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if app.focus != focusList {
+		t.Errorf("focus after Ctrl-J = %d; want focusList", app.focus)
+	}
+}
+
+func TestApp_JInFocusBookmarksMovesBookmarkCursor(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}, {ID: "bm2"}},
+		map[string]time.Time{"bm1": time.Unix(200, 0), "bm2": time.Unix(100, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if app.bookmarks.Cursor() != 1 {
+		t.Errorf("bookmarks cursor after j = %d; want 1", app.bookmarks.Cursor())
+	}
+	if app.list.Cursor() != 0 {
+		t.Errorf("list cursor changed despite focusBookmarks: %d", app.list.Cursor())
+	}
+}
+
+func TestApp_EnterInFocusBookmarksResumesBookmarked(t *testing.T) {
+	var resumed session.Meta
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		ResumeSelected: func(m session.Meta) tea.Cmd {
+			resumed = m
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1", Enriched: true, CWD: "/work"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter in focusBookmarks should return a resume cmd")
+	}
+	cmd()
+	if resumed.ID != "bm1" {
+		t.Errorf("resumed.ID = %q; want bm1", resumed.ID)
+	}
+}
+
+func TestApp_BKeyAddsToBookmarks(t *testing.T) {
+	var saved []session.Bookmark
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			saved = bs
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "a", Enriched: true, CWD: "/work"},
+	}})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if cmd == nil {
+		t.Fatal("b should return a SaveBookmarks cmd")
+	}
+	cmd() // execute to populate `saved`
+	if len(saved) != 1 || saved[0].ID != "a" {
+		t.Errorf("saved = %+v; want [{ID:a, ...}]", saved)
+	}
+	if _, ok := app.bookmarkIDs["a"]; !ok {
+		t.Error("bookmarkIDs should contain 'a'")
+	}
+	if len(app.bookmarks.Items()) != 1 {
+		t.Errorf("bookmarks pane items = %d; want 1", len(app.bookmarks.Items()))
+	}
+}
+
+func TestApp_BKeyRemovesExistingBookmark(t *testing.T) {
+	var saved []session.Bookmark
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			saved = bs
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/work"}}})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // add
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // remove
+	if cmd == nil {
+		t.Fatal("second b should also return a SaveBookmarks cmd")
+	}
+	cmd()
+	if len(saved) != 0 {
+		t.Errorf("saved after toggle off = %+v; want empty", saved)
+	}
+	if _, ok := app.bookmarkIDs["a"]; ok {
+		t.Error("bookmarkIDs should not contain 'a' after toggle off")
+	}
+}
+
+func TestApp_ScanMsgSeedsBookmarksPane(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	// Pre-load bookmarkIDs as main.go would after reading the file.
+	app.bookmarkIDs["a"] = time.Unix(200, 0)
+	app.bookmarkIDs["offscope"] = time.Unix(100, 0)
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/work"}}})
+	items := app.bookmarks.Items()
+	if len(items) != 2 {
+		t.Fatalf("bookmarks items = %d; want 2", len(items))
+	}
+	if items[0].ID != "a" { // newer StarredAt first
+		t.Errorf("items[0] = %q; want a", items[0].ID)
+	}
+	if items[1].ID != "offscope" || items[1].Enriched {
+		t.Errorf("items[1] = %+v; want stub for offscope", items[1])
+	}
+}
+
+func TestApp_BookmarkEnrichMsgReplacesStub(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.bookmarkIDs["x"] = time.Unix(1, 0)
+	app.Update(ScanMsg{Metas: nil})
+	// Precondition: bookmarks view should at least contain the id prefix for the stub.
+	if !strings.Contains(app.bookmarks.View(), "x") {
+		t.Fatalf("precondition: bookmarks view should show stub for x: %q", app.bookmarks.View())
+	}
+	app.Update(BookmarkEnrichMsg{Meta: session.Meta{
+		ID: "x", FirstPrompt: "filled in", Enriched: true, CWD: "/other/proj",
+	}})
+	items := app.bookmarks.Items()
+	if len(items) != 1 || items[0].FirstPrompt != "filled in" {
+		t.Errorf("after enrich: items[0] = %+v; want FirstPrompt=filled in", items[0])
+	}
+}
+
+func TestApp_DeleteBookmarkedSessionAutoUnbookmarks(t *testing.T) {
+	var savedAfter []session.Bookmark
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			savedAfter = bs
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/w"}}})
+	// Bookmark "a".
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	// Clear saved slot so we only see the post-delete save.
+	savedAfter = nil
+	_, cmd := app.Update(DeleteDoneMsg{ID: "a"})
+	if cmd == nil {
+		t.Fatal("DeleteDoneMsg for bookmarked id should return a SaveBookmarks cmd")
+	}
+	// The cmd is a Batch; execute it to fire the SaveBookmarks sub-cmd.
+	if msg := cmd(); msg != nil {
+		// Batch cmd may return a BatchMsg containing further cmds; execute them.
+		if batch, ok := msg.(tea.BatchMsg); ok {
+			for _, sub := range batch {
+				if sub != nil {
+					sub()
+				}
+			}
+		}
+	}
+	if _, ok := app.bookmarkIDs["a"]; ok {
+		t.Error("bookmarkIDs still contains 'a' after delete")
+	}
+	if len(app.bookmarks.Items()) != 0 {
+		t.Errorf("bookmarks items = %d; want 0", len(app.bookmarks.Items()))
+	}
+	if len(savedAfter) != 0 {
+		t.Errorf("savedAfter = %+v; want empty", savedAfter)
+	}
+}
+
+func TestApp_SearchHidesBookmarksPane(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1", FirstPrompt: "uniqueBookmarkText"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	// Confirm bookmark visible pre-search.
+	if !strings.Contains(app.View(), "uniqueBookmarkText") {
+		t.Fatal("precondition: bookmark row should be visible before /")
+	}
+	// Enter search.
+	m, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if strings.Contains(m.View(), "uniqueBookmarkText") {
+		t.Error("bookmarks pane should be hidden during search mode")
+	}
+	// Esc exits search.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !strings.Contains(m.View(), "uniqueBookmarkText") {
+		t.Error("bookmarks pane should reappear after Esc")
+	}
+}
+
+func TestApp_SearchPreservesPriorFocus(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusBookmarks {
+		t.Fatalf("precondition: focus = %d; want focusBookmarks", app.focus)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if app.focus != focusList {
+		t.Errorf("during search: focus = %d; want focusList", app.focus)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if app.focus != focusBookmarks {
+		t.Errorf("after esc: focus = %d; want focusBookmarks (restored)", app.focus)
+	}
+}
+
+// TestApp_SearchEscRefreshesPreviewFromRestoredFocus covers the bug
+// where esc from search restored focusBookmarks but left the preview
+// showing the list's selection. After esc, the preview meta must
+// reflect the focused pane's cursor.
+func TestApp_SearchEscRefreshesPreviewFromRestoredFocus(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "list-item", FirstPrompt: "from list"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1", FirstPrompt: "from bookmark"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+
+	v := app.preview.View()
+	if !strings.Contains(v, "bm1") {
+		t.Errorf("preview after esc should show bookmarked session header (bm1); got: %q", v)
+	}
+}
+
+// TestApp_WindowSizeMsgResizesBookmarksPane covers the bug where
+// WindowSizeMsg never updated the bookmarks pane's width, leaving it
+// stuck at the startup value.
+func TestApp_WindowSizeMsgResizesBookmarksPane(t *testing.T) {
+	app := NewApp(AppConfig{Width: 80, Height: 20, LoadTranscript: stubLoad})
+	app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	// Empty pane renders the "no bookmarks" hint padded to the pane's
+	// width. A stale width would produce an 80-char line.
+	v := app.bookmarks.View()
+	first := strings.Split(v, "\n")[0]
+	if got := ansi.StringWidth(first); got < 160 {
+		t.Errorf("bookmarks pane width after resize = %d; want >= 160", got)
+	}
+}
+
+func TestApp_EnterOnRemovedStubBannersAndSkipsResume(t *testing.T) {
+	var resumed session.Meta
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		ResumeSelected: func(m session.Meta) tea.Cmd {
+			resumed = m
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "gone", LoadErr: session.ErrMissing}},
+		map[string]time.Time{"gone": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("Enter on removed stub should not return a resume cmd")
+	}
+	if resumed.ID != "" {
+		t.Errorf("resumed.ID = %q; want empty (not called)", resumed.ID)
+	}
+	if !strings.Contains(app.banner, "session file missing") {
+		t.Errorf("banner = %q; want contains 'session file missing'", app.banner)
 	}
 }

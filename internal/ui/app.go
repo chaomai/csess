@@ -2,8 +2,10 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -70,6 +72,13 @@ type searchResultsMsg struct {
 	err     error
 }
 
+// SaveBookmarksDoneMsg is delivered after the bookmarks file is written.
+type SaveBookmarksDoneMsg struct{ Err error }
+
+// BookmarkEnrichMsg delivers a Meta for a bookmark that wasn't in the
+// initial session scan (off-scope / different project).
+type BookmarkEnrichMsg struct{ Meta session.Meta }
+
 // --- Modes ---
 
 type mode int
@@ -78,6 +87,15 @@ const (
 	modeNormal mode = iota
 	modeSearch
 	modeConfirm
+)
+
+// focus tracks which pane receives j/k/Enter/y/d keystrokes in
+// normal mode. Switched with Ctrl-J / Ctrl-K.
+type focus int
+
+const (
+	focusList focus = iota
+	focusBookmarks
 )
 
 // hexPrefixRe matches queries that look like session-id prefixes.
@@ -99,6 +117,11 @@ type AppConfig struct {
 	// RunSearch, when non-nil, replaces the in-memory filter with rg-backed
 	// full-text search. Receives the active context so callers can cancel.
 	RunSearch func(ctx context.Context, query string) ([]search.Match, error)
+
+	// SaveBookmarks writes the given set to disk and returns a
+	// SaveBookmarksDoneMsg when finished. Nil in tests unless the test
+	// wants to assert save behavior.
+	SaveBookmarks func([]session.Bookmark) tea.Cmd
 }
 
 // --- App model ---
@@ -114,6 +137,11 @@ type App struct {
 	allIndex  map[string]int // ID -> allItems[index] for O(1) enrich updates
 	banner    string
 	bannerExp time.Time
+
+	bookmarks   *BookmarksPane
+	bookmarkIDs map[string]time.Time
+	focus       focus
+	prevFocus   focus
 
 	transcriptSeq  int
 	transcriptCtx  context.Context
@@ -133,7 +161,16 @@ func NewApp(cfg AppConfig) *App {
 	preview := NewPreview(prevW, cfg.Height-2)
 	search := NewSearchBar()
 	matchList := NewMatchList(listW, cfg.Height-2)
-	app := &App{cfg: cfg, list: list, preview: preview, search: search, matchList: matchList}
+	bookmarks := NewBookmarksPane(cfg.Width, 5)
+	app := &App{
+		cfg:         cfg,
+		list:        list,
+		preview:     preview,
+		search:      search,
+		matchList:   matchList,
+		bookmarks:   bookmarks,
+		bookmarkIDs: map[string]time.Time{},
+	}
 	app.transcriptCtx, app.transcriptStop = context.WithCancel(context.Background())
 	app.searchCancel = func() {} // no-op until first search
 	return app
@@ -159,9 +196,22 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.cfg.Width, a.cfg.Height = m.Width, m.Height
 		listW, prevW := splitWidth(m.Width)
-		a.list.SetSize(listW, m.Height-2)
-		a.matchList.SetSize(listW, m.Height-2)
-		a.preview.SetSize(prevW, m.Height-2)
+		// Split vertical space between bookmarks pane (up to ~1/2 height,
+		// min 3 when non-empty) and the list/preview body. The status
+		// line takes 1 row.
+		bmCap := (m.Height - 2) / 2
+		if bmCap < 3 {
+			bmCap = 3
+		}
+		bmH := a.bookmarks.DesiredHeight(bmCap)
+		bodyH := m.Height - 2 - bmH
+		if bodyH < 1 {
+			bodyH = 1
+		}
+		a.bookmarks.SetSize(m.Width, bmH)
+		a.list.SetSize(listW, bodyH)
+		a.matchList.SetSize(listW, bodyH)
+		a.preview.SetSize(prevW, bodyH)
 		return a, nil
 
 	case ScanMsg:
@@ -171,8 +221,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.allIndex[it.ID] = i
 		}
 		a.list.SetItems(m.Metas)
-		a.updatePreviewFromSelection()
-		return a, a.loadTranscriptForSelection()
+		a.seedBookmarks()
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 
 	case EnrichMsg:
 		// O(1) update via index; search operates on allItems so we keep
@@ -194,6 +245,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// updatePreviewFromSelection here (it would SetMeta and wipe
 		// the loaded transcript).
 		a.list.Resort()
+		return a, nil
+
+	case BookmarkEnrichMsg:
+		a.bookmarks.ReplaceItem(m.Meta)
+		if sel, ok := a.bookmarks.Selected(); ok && sel.ID == m.Meta.ID && a.focus == focusBookmarks {
+			a.preview.UpdateMeta(m.Meta)
+		}
 		return a, nil
 
 	case TurnMsg:
@@ -225,6 +283,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 
+	case SaveBookmarksDoneMsg:
+		if m.Err != nil {
+			a.banner = "bookmark save failed: " + m.Err.Error()
+			a.bannerExp = time.Now().Add(5 * time.Second)
+		}
+		return a, nil
+
 	case ResumeDoneMsg:
 		if m.Err != nil {
 			a.banner = "resume failed: " + m.Err.Error()
@@ -250,11 +315,17 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i, it := range keep {
 			a.allIndex[it.ID] = i
 		}
+		var bookmarkSaveCmd tea.Cmd
+		if _, existed := a.bookmarkIDs[m.ID]; existed {
+			delete(a.bookmarkIDs, m.ID)
+			a.bookmarks.Remove(m.ID)
+			bookmarkSaveCmd = a.saveBookmarksCmd()
+		}
 		a.applyFilter()
-		a.updatePreviewFromSelection()
+		a.updatePreviewFromFocus()
 		a.banner = "deleted " + m.ID
 		a.bannerExp = time.Now().Add(3 * time.Second)
-		return a, a.loadTranscriptForSelection()
+		return a, tea.Batch(a.loadTranscriptForFocus(), bookmarkSaveCmd)
 
 	case tea.KeyMsg:
 		return a.handleKey(m)
@@ -295,7 +366,9 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.currentMatch = nil
 			a.searchCancel()
 			a.applyFilter()
-			return a, nil
+			a.focus = a.prevFocus
+			a.updatePreviewFromFocus()
+			return a, a.loadTranscriptForFocus()
 
 		case "up", "down", "ctrl+p", "ctrl+n":
 			if a.showMatches {
@@ -354,7 +427,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !confirmed {
 			return a, nil
 		}
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -366,13 +439,26 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// modeNormal
 	switch km.String() {
+	case "ctrl+k":
+		if len(a.bookmarks.Items()) == 0 {
+			return a, nil
+		}
+		a.focus = focusBookmarks
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
+	case "ctrl+j":
+		a.focus = focusList
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "/":
+		a.prevFocus = a.focus
+		a.focus = focusList
 		a.mode = modeSearch
 		return a, a.search.Focus()
 	case "d":
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -380,7 +466,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.mode = modeConfirm
 		return a, nil
 	case "y":
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -388,9 +474,28 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, a.cfg.CopySelected(sel)
 		}
 		return a, nil
+	case "b":
+		sel, ok := a.focusedSelection()
+		if !ok || sel.ID == "" {
+			return a, nil
+		}
+		if _, existed := a.bookmarkIDs[sel.ID]; existed {
+			delete(a.bookmarkIDs, sel.ID)
+			a.bookmarks.Remove(sel.ID)
+		} else {
+			now := time.Now()
+			a.bookmarkIDs[sel.ID] = now
+			a.bookmarks.Add(sel, now)
+		}
+		return a, a.saveBookmarksCmd()
 	case "enter":
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
+			return a, nil
+		}
+		if errors.Is(sel.LoadErr, session.ErrMissing) {
+			a.banner = "session file missing — press b to unbookmark"
+			a.bannerExp = time.Now().Add(4 * time.Second)
 			return a, nil
 		}
 		if !sel.Enriched || sel.CWD == "" {
@@ -406,9 +511,13 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.preview.ToggleExpanded()
 		return a, nil
 	case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G", "home", "end":
-		a.list.Update(km)
-		a.updatePreviewFromSelection()
-		return a, a.loadTranscriptForSelection()
+		if a.focus == focusBookmarks {
+			a.bookmarks.Update(km)
+		} else {
+			a.list.Update(km)
+		}
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 	case "pgup", "pgdown":
 		_, cmd := a.preview.Update(km)
 		return a, cmd
@@ -466,7 +575,11 @@ func (a *App) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, lipgloss.NewStyle().Padding(0, 1).Render("│"), right)
 
 	status := a.statusLine()
-	return body + "\n" + status
+	if a.mode == modeSearch {
+		return body + "\n" + status
+	}
+	top := a.bookmarks.View()
+	return lipgloss.JoinVertical(lipgloss.Left, top, body, status)
 }
 
 func (a *App) statusLine() string {
@@ -485,7 +598,7 @@ func (a *App) statusLine() string {
 	default:
 		n := len(a.list.Items())
 		parts = append(parts, fmt.Sprintf("%d sessions", n))
-		parts = append(parts, "[/] filter  [Enter] resume  [y] copy id  [d] delete  [q] quit")
+		parts = append(parts, "[/] filter  [b] bookmark  [^K/^J] focus  [Enter] resume  [y] copy id  [d] delete  [q] quit")
 	}
 	if a.banner != "" && time.Now().Before(a.bannerExp) {
 		parts = append(parts, "· "+a.banner)
@@ -557,4 +670,70 @@ func (a *App) matchListSelectedMeta() (bool, session.Meta) {
 		return false, session.Meta{}
 	}
 	return true, a.metaForMatch(match)
+}
+
+// focusedSelection returns the cursor's selected Meta from whichever
+// pane currently has focus.
+func (a *App) focusedSelection() (session.Meta, bool) {
+	switch a.focus {
+	case focusBookmarks:
+		return a.bookmarks.Selected()
+	default:
+		return a.list.Selected()
+	}
+}
+
+func (a *App) updatePreviewFromFocus() {
+	sel, ok := a.focusedSelection()
+	if !ok {
+		a.preview.SetMeta(session.Meta{})
+		return
+	}
+	a.preview.SetMeta(sel)
+}
+
+func (a *App) loadTranscriptForFocus() tea.Cmd {
+	sel, ok := a.focusedSelection()
+	if !ok {
+		return nil
+	}
+	return a.loadTranscript(sel)
+}
+
+// saveBookmarksCmd builds the ordered []Bookmark snapshot and delegates
+// to the injected SaveBookmarks cmd (no-op if unset).
+func (a *App) saveBookmarksCmd() tea.Cmd {
+	if a.cfg.SaveBookmarks == nil {
+		return nil
+	}
+	bs := make([]session.Bookmark, 0, len(a.bookmarkIDs))
+	for id, t := range a.bookmarkIDs {
+		bs = append(bs, session.Bookmark{ID: id, StarredAt: t})
+	}
+	sort.Slice(bs, func(i, j int) bool { return bs[i].StarredAt.After(bs[j].StarredAt) })
+	return a.cfg.SaveBookmarks(bs)
+}
+
+// SetBookmark seeds a bookmark from the persisted store during startup.
+// Does not trigger Save (nothing has changed on disk). Callers must call
+// it BEFORE the initial ScanMsg is dispatched.
+func (a *App) SetBookmark(id string, starredAt time.Time) {
+	a.bookmarkIDs[id] = starredAt
+}
+
+// seedBookmarks populates the bookmarks pane from a.bookmarkIDs after a
+// ScanMsg. Known ids (in allIndex) get their full Meta; off-scope ids
+// get a stub Meta{ID:id} that BookmarkEnrichMsg will later replace.
+func (a *App) seedBookmarks() {
+	items := make([]session.Meta, 0, len(a.bookmarkIDs))
+	sa := make(map[string]time.Time, len(a.bookmarkIDs))
+	for id, t := range a.bookmarkIDs {
+		if i, ok := a.allIndex[id]; ok {
+			items = append(items, a.allItems[i])
+		} else {
+			items = append(items, session.Meta{ID: id})
+		}
+		sa[id] = t
+	}
+	a.bookmarks.SetItems(items, sa)
 }

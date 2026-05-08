@@ -27,8 +27,22 @@ csess --here    # limit to the current directory
 | `y` | copy session id to clipboard |
 | `d` | soft-delete (moves to `~/.claude/.trash/`) |
 | `/` | filter |
+| `b` | bookmark / unbookmark the cursor session |
+| `^K` / `^J` | move focus between bookmarks pane and session list |
 | `a` | expand truncated transcript |
 | `q` | quit |
+
+### Bookmarks
+
+Press `b` to bookmark the session under the cursor. Bookmarked sessions
+appear in a pane above the list, sorted by when you bookmarked them.
+Bookmarks persist in `~/.claude/csess/bookmarks.json` (override with
+`--bookmarks-file`) and are global — they show regardless of whether
+csess is running with `--here` or across all projects.
+
+`Ctrl-K` / `Ctrl-J` moves keyboard focus between the bookmarks pane and
+the session list. `Enter`, `y`, and `d` operate on whichever pane has
+focus. Deleting a bookmarked session auto-removes the bookmark.
 
 ## How it works
 
