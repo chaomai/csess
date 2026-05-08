@@ -196,15 +196,15 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		a.cfg.Width, a.cfg.Height = m.Width, m.Height
 		listW, prevW := splitWidth(m.Width)
-		// Split vertical space between bookmarks pane (up to ~1/2 height,
-		// min 3 when non-empty) and the list/preview body. The status
-		// line takes 1 row.
-		bmCap := (m.Height - 2) / 2
+		// Layout reserves rows for: status (1), body↔status divider (1),
+		// and when bookmarks pane is visible, bookmarks↔body divider (1).
+		// Bookmarks pane takes up to ~1/2 height (min 3 when non-empty).
+		bmCap := (m.Height - 3) / 2
 		if bmCap < 3 {
 			bmCap = 3
 		}
 		bmH := a.bookmarks.DesiredHeight(bmCap)
-		bodyH := m.Height - 2 - bmH
+		bodyH := m.Height - 3 - bmH
 		if bodyH < 1 {
 			bodyH = 1
 		}
@@ -582,11 +582,22 @@ func (a *App) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, lipgloss.NewStyle().Padding(0, 1).Render("│"), right)
 
 	status := a.statusLine()
+	hDiv := a.horizontalDivider()
 	if a.mode == modeSearch {
-		return body + "\n" + status
+		return lipgloss.JoinVertical(lipgloss.Left, body, hDiv, status)
 	}
 	top := a.bookmarks.View()
-	return lipgloss.JoinVertical(lipgloss.Left, top, body, status)
+	return lipgloss.JoinVertical(lipgloss.Left, top, hDiv, body, hDiv, status)
+}
+
+// horizontalDivider renders a full-width dim rule used to separate
+// stacked regions in View (bookmarks ↔ body ↔ status).
+func (a *App) horizontalDivider() string {
+	w := a.cfg.Width
+	if w < 10 {
+		w = 10
+	}
+	return listDimStyle.Render(strings.Repeat("─", w))
 }
 
 func (a *App) statusLine() string {
