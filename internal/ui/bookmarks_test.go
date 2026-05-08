@@ -183,3 +183,15 @@ func idsOf(metas []session.Meta) []string {
 	}
 	return out
 }
+
+func TestBookmarksPane_MissingFileRendersRemovedMarker(t *testing.T) {
+	p := NewBookmarksPane(120, 10)
+	p.SetItems(
+		[]session.Meta{{ID: "gone", LoadErr: session.ErrMissing}},
+		map[string]time.Time{"gone": time.Unix(100, 0)},
+	)
+	v := p.View()
+	if !strings.Contains(v, "(removed)") {
+		t.Errorf("missing-file row should show (removed): %q", v)
+	}
+}

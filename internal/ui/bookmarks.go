@@ -4,6 +4,7 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -140,6 +141,9 @@ func (p *BookmarksPane) row(m session.Meta) string {
 	id := m.ID
 	if len(id) > 8 {
 		id = id[:8]
+	}
+	if errors.Is(m.LoadErr, session.ErrMissing) {
+		return listDimStyle.Render(fmt.Sprintf("%3s  %-8s  (removed)", tRel, id))
 	}
 	proj := "-"
 	if m.CWD != "" {
