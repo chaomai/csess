@@ -207,8 +207,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.allIndex[it.ID] = i
 		}
 		a.list.SetItems(m.Metas)
-		a.updatePreviewFromSelection()
-		return a, a.loadTranscriptForSelection()
+		a.seedBookmarks()
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 
 	case EnrichMsg:
 		// O(1) update via index; search operates on allItems so we keep
@@ -230,6 +231,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// updatePreviewFromSelection here (it would SetMeta and wipe
 		// the loaded transcript).
 		a.list.Resort()
+		return a, nil
+
+	case BookmarkEnrichMsg:
+		a.bookmarks.ReplaceItem(m.Meta)
+		if sel, ok := a.bookmarks.Selected(); ok && sel.ID == m.Meta.ID && a.focus == focusBookmarks {
+			a.preview.UpdateMeta(m.Meta)
+		}
 		return a, nil
 
 	case TurnMsg:
@@ -671,4 +679,21 @@ func (a *App) saveBookmarksCmd() tea.Cmd {
 	}
 	sort.Slice(bs, func(i, j int) bool { return bs[i].StarredAt.After(bs[j].StarredAt) })
 	return a.cfg.SaveBookmarks(bs)
+}
+
+// seedBookmarks populates the bookmarks pane from a.bookmarkIDs after a
+// ScanMsg. Known ids (in allIndex) get their full Meta; off-scope ids
+// get a stub Meta{ID:id} that BookmarkEnrichMsg will later replace.
+func (a *App) seedBookmarks() {
+	items := make([]session.Meta, 0, len(a.bookmarkIDs))
+	sa := make(map[string]time.Time, len(a.bookmarkIDs))
+	for id, t := range a.bookmarkIDs {
+		if i, ok := a.allIndex[id]; ok {
+			items = append(items, a.allItems[i])
+		} else {
+			items = append(items, session.Meta{ID: id})
+		}
+		sa[id] = t
+	}
+	a.bookmarks.SetItems(items, sa)
 }

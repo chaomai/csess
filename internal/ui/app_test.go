@@ -462,3 +462,38 @@ func TestApp_BKeyRemovesExistingBookmark(t *testing.T) {
 		t.Error("bookmarkIDs should not contain 'a' after toggle off")
 	}
 }
+
+func TestApp_ScanMsgSeedsBookmarksPane(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	// Pre-load bookmarkIDs as main.go would after reading the file.
+	app.bookmarkIDs["a"] = time.Unix(200, 0)
+	app.bookmarkIDs["offscope"] = time.Unix(100, 0)
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/work"}}})
+	items := app.bookmarks.Items()
+	if len(items) != 2 {
+		t.Fatalf("bookmarks items = %d; want 2", len(items))
+	}
+	if items[0].ID != "a" { // newer StarredAt first
+		t.Errorf("items[0] = %q; want a", items[0].ID)
+	}
+	if items[1].ID != "offscope" || items[1].Enriched {
+		t.Errorf("items[1] = %+v; want stub for offscope", items[1])
+	}
+}
+
+func TestApp_BookmarkEnrichMsgReplacesStub(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.bookmarkIDs["x"] = time.Unix(1, 0)
+	app.Update(ScanMsg{Metas: nil})
+	// Precondition: bookmarks view should at least contain the id prefix for the stub.
+	if !strings.Contains(app.bookmarks.View(), "x") {
+		t.Fatalf("precondition: bookmarks view should show stub for x: %q", app.bookmarks.View())
+	}
+	app.Update(BookmarkEnrichMsg{Meta: session.Meta{
+		ID: "x", FirstPrompt: "filled in", Enriched: true, CWD: "/other/proj",
+	}})
+	items := app.bookmarks.Items()
+	if len(items) != 1 || items[0].FirstPrompt != "filled in" {
+		t.Errorf("after enrich: items[0] = %+v; want FirstPrompt=filled in", items[0])
+	}
+}
