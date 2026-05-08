@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -70,6 +71,13 @@ type searchResultsMsg struct {
 	err     error
 }
 
+// SaveBookmarksDoneMsg is delivered after the bookmarks file is written.
+type SaveBookmarksDoneMsg struct{ Err error }
+
+// BookmarkEnrichMsg delivers a Meta for a bookmark that wasn't in the
+// initial session scan (off-scope / different project).
+type BookmarkEnrichMsg struct{ Meta session.Meta }
+
 // --- Modes ---
 
 type mode int
@@ -108,6 +116,11 @@ type AppConfig struct {
 	// RunSearch, when non-nil, replaces the in-memory filter with rg-backed
 	// full-text search. Receives the active context so callers can cancel.
 	RunSearch func(ctx context.Context, query string) ([]search.Match, error)
+
+	// SaveBookmarks writes the given set to disk and returns a
+	// SaveBookmarksDoneMsg when finished. Nil in tests unless the test
+	// wants to assert save behavior.
+	SaveBookmarks func([]session.Bookmark) tea.Cmd
 }
 
 // --- App model ---
@@ -245,6 +258,13 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.bannerExp = m.Until
 		} else {
 			a.bannerExp = time.Now().Add(3 * time.Second)
+		}
+		return a, nil
+
+	case SaveBookmarksDoneMsg:
+		if m.Err != nil {
+			a.banner = "bookmark save failed: " + m.Err.Error()
+			a.bannerExp = time.Now().Add(5 * time.Second)
 		}
 		return a, nil
 
@@ -422,6 +442,20 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return a, a.cfg.CopySelected(sel)
 		}
 		return a, nil
+	case "b":
+		sel, ok := a.focusedSelection()
+		if !ok || sel.ID == "" {
+			return a, nil
+		}
+		if _, existed := a.bookmarkIDs[sel.ID]; existed {
+			delete(a.bookmarkIDs, sel.ID)
+			a.bookmarks.Remove(sel.ID)
+		} else {
+			now := time.Now()
+			a.bookmarkIDs[sel.ID] = now
+			a.bookmarks.Add(sel, now)
+		}
+		return a, a.saveBookmarksCmd()
 	case "enter":
 		sel, ok := a.focusedSelection()
 		if !ok {
@@ -623,4 +657,18 @@ func (a *App) loadTranscriptForFocus() tea.Cmd {
 		return nil
 	}
 	return a.loadTranscript(sel)
+}
+
+// saveBookmarksCmd builds the ordered []Bookmark snapshot and delegates
+// to the injected SaveBookmarks cmd (no-op if unset).
+func (a *App) saveBookmarksCmd() tea.Cmd {
+	if a.cfg.SaveBookmarks == nil {
+		return nil
+	}
+	bs := make([]session.Bookmark, 0, len(a.bookmarkIDs))
+	for id, t := range a.bookmarkIDs {
+		bs = append(bs, session.Bookmark{ID: id, StarredAt: t})
+	}
+	sort.Slice(bs, func(i, j int) bool { return bs[i].StarredAt.After(bs[j].StarredAt) })
+	return a.cfg.SaveBookmarks(bs)
 }

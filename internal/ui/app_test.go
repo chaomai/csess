@@ -410,3 +410,55 @@ func TestApp_EnterInFocusBookmarksResumesBookmarked(t *testing.T) {
 		t.Errorf("resumed.ID = %q; want bm1", resumed.ID)
 	}
 }
+
+func TestApp_BKeyAddsToBookmarks(t *testing.T) {
+	var saved []session.Bookmark
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			saved = bs
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "a", Enriched: true, CWD: "/work"},
+	}})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if cmd == nil {
+		t.Fatal("b should return a SaveBookmarks cmd")
+	}
+	cmd() // execute to populate `saved`
+	if len(saved) != 1 || saved[0].ID != "a" {
+		t.Errorf("saved = %+v; want [{ID:a, ...}]", saved)
+	}
+	if _, ok := app.bookmarkIDs["a"]; !ok {
+		t.Error("bookmarkIDs should contain 'a'")
+	}
+	if len(app.bookmarks.Items()) != 1 {
+		t.Errorf("bookmarks pane items = %d; want 1", len(app.bookmarks.Items()))
+	}
+}
+
+func TestApp_BKeyRemovesExistingBookmark(t *testing.T) {
+	var saved []session.Bookmark
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			saved = bs
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/work"}}})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // add
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}}) // remove
+	if cmd == nil {
+		t.Fatal("second b should also return a SaveBookmarks cmd")
+	}
+	cmd()
+	if len(saved) != 0 {
+		t.Errorf("saved after toggle off = %+v; want empty", saved)
+	}
+	if _, ok := app.bookmarkIDs["a"]; ok {
+		t.Error("bookmarkIDs should not contain 'a' after toggle off")
+	}
+}
