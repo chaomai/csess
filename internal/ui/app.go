@@ -352,6 +352,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.currentMatch = nil
 			a.searchCancel()
 			a.applyFilter()
+			a.focus = a.prevFocus
 			return a, nil
 
 		case "up", "down", "ctrl+p", "ctrl+n":
@@ -437,6 +438,8 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "/":
+		a.prevFocus = a.focus
+		a.focus = focusList
 		a.mode = modeSearch
 		return a, a.search.Focus()
 	case "d":
@@ -552,7 +555,11 @@ func (a *App) View() string {
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, lipgloss.NewStyle().Padding(0, 1).Render("│"), right)
 
 	status := a.statusLine()
-	return body + "\n" + status
+	if a.mode == modeSearch {
+		return body + "\n" + status
+	}
+	top := a.bookmarks.View()
+	return lipgloss.JoinVertical(lipgloss.Left, top, body, status)
 }
 
 func (a *App) statusLine() string {

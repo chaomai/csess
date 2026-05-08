@@ -537,3 +537,47 @@ func TestApp_DeleteBookmarkedSessionAutoUnbookmarks(t *testing.T) {
 		t.Errorf("savedAfter = %+v; want empty", savedAfter)
 	}
 }
+
+func TestApp_SearchHidesBookmarksPane(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1", FirstPrompt: "uniqueBookmarkText"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	// Confirm bookmark visible pre-search.
+	if !strings.Contains(app.View(), "uniqueBookmarkText") {
+		t.Fatal("precondition: bookmark row should be visible before /")
+	}
+	// Enter search.
+	m, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if strings.Contains(m.View(), "uniqueBookmarkText") {
+		t.Error("bookmarks pane should be hidden during search mode")
+	}
+	// Esc exits search.
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if !strings.Contains(m.View(), "uniqueBookmarkText") {
+		t.Error("bookmarks pane should reappear after Esc")
+	}
+}
+
+func TestApp_SearchPreservesPriorFocus(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusBookmarks {
+		t.Fatalf("precondition: focus = %d; want focusBookmarks", app.focus)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if app.focus != focusList {
+		t.Errorf("during search: focus = %d; want focusList", app.focus)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	if app.focus != focusBookmarks {
+		t.Errorf("after esc: focus = %d; want focusBookmarks (restored)", app.focus)
+	}
+}
