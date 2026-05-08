@@ -306,6 +306,7 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.bookmarks.Remove(m.ID)
 			bookmarkSaveCmd = a.saveBookmarksCmd()
 			a.relayout()
+			a.ensureFocusNotOnEmptyBookmarks()
 		}
 		a.applyFilter()
 		a.updatePreviewFromFocus()
@@ -481,6 +482,10 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.bookmarks.Add(sel, now)
 		}
 		a.relayout()
+		if a.ensureFocusNotOnEmptyBookmarks() {
+			a.updatePreviewFromFocus()
+			return a, tea.Batch(a.saveBookmarksCmd(), a.loadTranscriptForFocus())
+		}
 		return a, a.saveBookmarksCmd()
 	case "enter":
 		sel, ok := a.focusedSelection()
@@ -737,6 +742,20 @@ func (a *App) focusedSelection() (session.Meta, bool) {
 func (a *App) applyFocus() {
 	a.list.SetFocused(a.focus == focusList)
 	a.bookmarks.SetFocused(a.focus == focusBookmarks)
+}
+
+// ensureFocusNotOnEmptyBookmarks flips focus back to the list if the
+// bookmarks pane just became empty while focused — you can't navigate
+// an empty pane, so we would otherwise strand the user. Returns true
+// if focus was moved; callers should then refresh preview + transcript
+// via updatePreviewFromFocus / loadTranscriptForFocus.
+func (a *App) ensureFocusNotOnEmptyBookmarks() bool {
+	if a.focus == focusBookmarks && len(a.bookmarks.Items()) == 0 {
+		a.focus = focusList
+		a.applyFocus()
+		return true
+	}
+	return false
 }
 
 func (a *App) updatePreviewFromFocus() {

@@ -504,6 +504,35 @@ func TestApp_BKeyAddsToBookmarks(t *testing.T) {
 	}
 }
 
+// TestApp_UnbookmarkingLastReturnsFocusToList — when focus is on the
+// bookmarks pane and the user un-bookmarks the last entry, focus
+// auto-flips back to the list so they're not stranded on an empty
+// unnavigable pane.
+func TestApp_UnbookmarkingLastReturnsFocusToList(t *testing.T) {
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		SaveBookmarks: func(bs []session.Bookmark) tea.Cmd {
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true, CWD: "/w"}}})
+	// Bookmark "a", then Ctrl-K into the bookmarks pane.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusBookmarks {
+		t.Fatalf("precondition: focus = %d; want focusBookmarks", app.focus)
+	}
+	// Unbookmark from within the bookmarks pane — this empties it.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if app.focus != focusList {
+		t.Errorf("focus after un-bookmarking last entry = %d; want focusList", app.focus)
+	}
+	if !app.list.Focused() || app.bookmarks.Focused() {
+		t.Errorf("pane focused flags not updated: list=%v bookmarks=%v; want true/false",
+			app.list.Focused(), app.bookmarks.Focused())
+	}
+}
+
 // TestApp_BKeyGrowsBookmarksPaneHeight guards against the bug where
 // the pane was stuck at 1 row regardless of item count because
 // WindowSizeMsg was the only callsite that recomputed SetSize.
