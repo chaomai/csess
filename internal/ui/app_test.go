@@ -368,3 +368,45 @@ func TestApp_CtrlJReturnsFocusToList(t *testing.T) {
 		t.Errorf("focus after Ctrl-J = %d; want focusList", app.focus)
 	}
 }
+
+func TestApp_JInFocusBookmarksMovesBookmarkCursor(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}, {ID: "bm2"}},
+		map[string]time.Time{"bm1": time.Unix(200, 0), "bm2": time.Unix(100, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if app.bookmarks.Cursor() != 1 {
+		t.Errorf("bookmarks cursor after j = %d; want 1", app.bookmarks.Cursor())
+	}
+	if app.list.Cursor() != 0 {
+		t.Errorf("list cursor changed despite focusBookmarks: %d", app.list.Cursor())
+	}
+}
+
+func TestApp_EnterInFocusBookmarksResumesBookmarked(t *testing.T) {
+	var resumed session.Meta
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		ResumeSelected: func(m session.Meta) tea.Cmd {
+			resumed = m
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1", Enriched: true, CWD: "/work"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("Enter in focusBookmarks should return a resume cmd")
+	}
+	cmd()
+	if resumed.ID != "bm1" {
+		t.Errorf("resumed.ID = %q; want bm1", resumed.ID)
+	}
+}

@@ -377,7 +377,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !confirmed {
 			return a, nil
 		}
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -406,7 +406,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.mode = modeSearch
 		return a, a.search.Focus()
 	case "d":
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -414,7 +414,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.mode = modeConfirm
 		return a, nil
 	case "y":
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -423,7 +423,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return a, nil
 	case "enter":
-		sel, ok := a.list.Selected()
+		sel, ok := a.focusedSelection()
 		if !ok {
 			return a, nil
 		}
@@ -440,9 +440,13 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.preview.ToggleExpanded()
 		return a, nil
 	case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G", "home", "end":
-		a.list.Update(km)
-		a.updatePreviewFromSelection()
-		return a, a.loadTranscriptForSelection()
+		if a.focus == focusBookmarks {
+			a.bookmarks.Update(km)
+		} else {
+			a.list.Update(km)
+		}
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 	case "pgup", "pgdown":
 		_, cmd := a.preview.Update(km)
 		return a, cmd
