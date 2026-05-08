@@ -324,3 +324,47 @@ func TestApp_SearchEscExitsSearch(t *testing.T) {
 		t.Error("showMatches should be false after exiting search")
 	}
 }
+
+func TestApp_CtrlKSwitchesFocusToBookmarks(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	// Manually seed a bookmark so the pane is non-empty.
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusBookmarks {
+		t.Errorf("focus after Ctrl-K = %d; want focusBookmarks", app.focus)
+	}
+	// j should now drive the bookmarks pane, not the list.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	if app.list.Cursor() != 0 {
+		t.Errorf("list cursor moved despite focusBookmarks: %d", app.list.Cursor())
+	}
+}
+
+func TestApp_CtrlKEmptyBookmarksIsNoop(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	// bookmarks pane is empty by default.
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	if app.focus != focusList {
+		t.Errorf("focus after Ctrl-K with empty bookmarks = %d; want focusList", app.focus)
+	}
+}
+
+func TestApp_CtrlJReturnsFocusToList(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlJ})
+	if app.focus != focusList {
+		t.Errorf("focus after Ctrl-J = %d; want focusList", app.focus)
+	}
+}

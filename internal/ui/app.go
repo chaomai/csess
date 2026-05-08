@@ -80,6 +80,15 @@ const (
 	modeConfirm
 )
 
+// focus tracks which pane receives j/k/Enter/y/d keystrokes in
+// normal mode. Switched with Ctrl-J / Ctrl-K.
+type focus int
+
+const (
+	focusList focus = iota
+	focusBookmarks
+)
+
 // hexPrefixRe matches queries that look like session-id prefixes.
 var hexPrefixRe = regexp.MustCompile(`^[0-9a-f-]{3,}$`)
 
@@ -115,6 +124,11 @@ type App struct {
 	banner    string
 	bannerExp time.Time
 
+	bookmarks   *BookmarksPane
+	bookmarkIDs map[string]time.Time
+	focus       focus
+	prevFocus   focus
+
 	transcriptSeq  int
 	transcriptCtx  context.Context
 	transcriptStop context.CancelFunc
@@ -133,7 +147,16 @@ func NewApp(cfg AppConfig) *App {
 	preview := NewPreview(prevW, cfg.Height-2)
 	search := NewSearchBar()
 	matchList := NewMatchList(listW, cfg.Height-2)
-	app := &App{cfg: cfg, list: list, preview: preview, search: search, matchList: matchList}
+	bookmarks := NewBookmarksPane(cfg.Width, 5)
+	app := &App{
+		cfg:         cfg,
+		list:        list,
+		preview:     preview,
+		search:      search,
+		matchList:   matchList,
+		bookmarks:   bookmarks,
+		bookmarkIDs: map[string]time.Time{},
+	}
 	app.transcriptCtx, app.transcriptStop = context.WithCancel(context.Background())
 	app.searchCancel = func() {} // no-op until first search
 	return app
@@ -366,6 +389,17 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	// modeNormal
 	switch km.String() {
+	case "ctrl+k":
+		if len(a.bookmarks.Items()) == 0 {
+			return a, nil
+		}
+		a.focus = focusBookmarks
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
+	case "ctrl+j":
+		a.focus = focusList
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "/":
@@ -557,4 +591,32 @@ func (a *App) matchListSelectedMeta() (bool, session.Meta) {
 		return false, session.Meta{}
 	}
 	return true, a.metaForMatch(match)
+}
+
+// focusedSelection returns the cursor's selected Meta from whichever
+// pane currently has focus.
+func (a *App) focusedSelection() (session.Meta, bool) {
+	switch a.focus {
+	case focusBookmarks:
+		return a.bookmarks.Selected()
+	default:
+		return a.list.Selected()
+	}
+}
+
+func (a *App) updatePreviewFromFocus() {
+	sel, ok := a.focusedSelection()
+	if !ok {
+		a.preview.SetMeta(session.Meta{})
+		return
+	}
+	a.preview.SetMeta(sel)
+}
+
+func (a *App) loadTranscriptForFocus() tea.Cmd {
+	sel, ok := a.focusedSelection()
+	if !ok {
+		return nil
+	}
+	return a.loadTranscript(sel)
 }
