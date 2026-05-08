@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -476,6 +477,11 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		sel, ok := a.focusedSelection()
 		if !ok {
+			return a, nil
+		}
+		if errors.Is(sel.LoadErr, session.ErrMissing) {
+			a.banner = "session file missing — press b to unbookmark"
+			a.bannerExp = time.Now().Add(4 * time.Second)
 			return a, nil
 		}
 		if !sel.Enriched || sel.CWD == "" {

@@ -581,3 +581,30 @@ func TestApp_SearchPreservesPriorFocus(t *testing.T) {
 		t.Errorf("after esc: focus = %d; want focusBookmarks (restored)", app.focus)
 	}
 }
+
+func TestApp_EnterOnRemovedStubBannersAndSkipsResume(t *testing.T) {
+	var resumed session.Meta
+	app := NewApp(AppConfig{
+		Width: 120, Height: 40, LoadTranscript: stubLoad,
+		ResumeSelected: func(m session.Meta) tea.Cmd {
+			resumed = m
+			return func() tea.Msg { return nil }
+		},
+	})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "gone", LoadErr: session.ErrMissing}},
+		map[string]time.Time{"gone": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlK})
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("Enter on removed stub should not return a resume cmd")
+	}
+	if resumed.ID != "" {
+		t.Errorf("resumed.ID = %q; want empty (not called)", resumed.ID)
+	}
+	if !strings.Contains(app.banner, "session file missing") {
+		t.Errorf("banner = %q; want contains 'session file missing'", app.banner)
+	}
+}
