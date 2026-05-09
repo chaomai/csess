@@ -28,11 +28,12 @@ type Match struct {
 
 // Options controls a Run call.
 type Options struct {
-	ProjectsDir string // e.g. ~/.claude/projects
-	Query       string // literal (fixed-string) query
-	Context     int    // lines of context before/after (default 3)
-	MaxMatches  int    // hard cap on returned matches (default 1000)
-	RgPath      string // optional override; empty = look up in PATH
+	ProjectsDir  string   // e.g. ~/.claude/projects
+	Query        string   // literal (fixed-string) query
+	Context      int      // lines of context before/after (default 3)
+	MaxMatches   int      // hard cap on returned matches (default 1000)
+	RgPath       string   // optional override; empty = look up in PATH
+	ExcludeGlobs []string // additional rg -g patterns, e.g. "!-Users-me/**"
 }
 
 // Run executes ripgrep and returns up to opts.MaxMatches matches.
@@ -69,11 +70,16 @@ func Run(ctx context.Context, opts Options) ([]Match, error) {
 		// orphan rows in the match list.
 		"-g", "*.jsonl",
 		"-g", "!**/subagents/**",
+	}
+	for _, g := range opts.ExcludeGlobs {
+		args = append(args, "-g", g)
+	}
+	args = append(args,
 		fmt.Sprintf("-C%d", opts.Context),
 		"--",
 		opts.Query,
 		opts.ProjectsDir,
-	}
+	)
 	cmd := exec.CommandContext(ctx, rgBin, args...)
 
 	stdout, err := cmd.StdoutPipe()

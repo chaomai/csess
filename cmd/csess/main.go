@@ -63,6 +63,15 @@ func main() {
 		scope = cwd
 	}
 
+	// In default (all-projects) mode, hide sessions whose cwd is the home
+	// directory itself — they're usually accidental `claude` invocations
+	// from a login shell and clutter the list. `--here` is an explicit
+	// pointer, so we respect it and leave scope alone there.
+	var hiddenProjectDir string
+	if allMode {
+		hiddenProjectDir = session.EncodeCWD(home)
+	}
+
 	// The scanner needs an fs.FS rooted at projectsDir's parent, with
 	// "projects" as the root subpath. os.DirFS gives us that easily.
 	parent, leaf := filepath.Split(*projectsDir)
@@ -78,6 +87,15 @@ func main() {
 	metas, err := scanner.Quick(scope)
 	if err != nil {
 		fatal("scan: %v", err)
+	}
+	if hiddenProjectDir != "" {
+		kept := metas[:0]
+		for _, m := range metas {
+			if m.ProjectDir != hiddenProjectDir {
+				kept = append(kept, m)
+			}
+		}
+		metas = kept
 	}
 	if len(metas) == 0 {
 		if *hereFlag {
@@ -99,6 +117,12 @@ func main() {
 		ProjectsDir: *projectsDir,
 		Context:     *contextN,
 		MaxMatches:  *maxMatches,
+	}
+	if hiddenProjectDir != "" {
+		// Prefix with **/ so rg's globber anchors the match inside the
+		// search root instead of treating the leading '-' as a flag-like
+		// literal that fails to match any path component.
+		rgRunner.ExcludeGlobs = []string{"!**/" + hiddenProjectDir + "/**"}
 	}
 
 	var pendingResume *session.Meta

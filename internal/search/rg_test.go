@@ -1,7 +1,10 @@
 package search
 
 import (
+	"context"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -93,5 +96,53 @@ func TestSessionIDFromPath(t *testing.T) {
 		if got != c.want {
 			t.Errorf("sessionIDFromPath(%q) = %q; want %q", c.path, got, c.want)
 		}
+	}
+}
+
+// TestRun_ExcludeGlobs verifies that entries in Options.ExcludeGlobs are
+// passed through to rg as additional -g patterns. Requires rg on PATH.
+func TestRun_ExcludeGlobs(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not in PATH")
+	}
+
+	root := t.TempDir()
+	keep := filepath.Join(root, "-Users-me-proj")
+	hide := filepath.Join(root, "-Users-me")
+	for _, d := range []string{keep, hide} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(d, "sess.jsonl")
+		if err := os.WriteFile(path, []byte(`{"x":"needle"}`+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ctx := context.Background()
+
+	// Baseline: no excludes, both dirs contribute a match.
+	got, err := Run(ctx, Options{ProjectsDir: root, Query: "needle"})
+	if err != nil {
+		t.Fatalf("baseline Run: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("baseline match count = %d; want 2", len(got))
+	}
+
+	// With exclude glob for the hide dir, only the keep dir remains.
+	got, err = Run(ctx, Options{
+		ProjectsDir:  root,
+		Query:        "needle",
+		ExcludeGlobs: []string{"!**/-Users-me/**"},
+	})
+	if err != nil {
+		t.Fatalf("excluded Run: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("excluded match count = %d; want 1", len(got))
+	}
+	if !strings.Contains(got[0].FilePath, "-Users-me-proj") {
+		t.Errorf("excluded match FilePath = %q; want match from -Users-me-proj", got[0].FilePath)
 	}
 }
