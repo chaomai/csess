@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -114,7 +115,7 @@ func TestRun_ExcludeGlobs(t *testing.T) {
 			t.Fatal(err)
 		}
 		path := filepath.Join(d, "sess.jsonl")
-		if err := os.WriteFile(path, []byte(`{"x":"needle"}`+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(`{"type":"user","message":{"content":"needle"}}`+"\n"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -144,5 +145,77 @@ func TestRun_ExcludeGlobs(t *testing.T) {
 	}
 	if !strings.Contains(got[0].FilePath, "-Users-me-proj") {
 		t.Errorf("excluded match FilePath = %q; want match from -Users-me-proj", got[0].FilePath)
+	}
+}
+
+// TestRun_FiltersNonConversationTypes verifies that match rows are kept
+// only for JSONL lines whose type is user or assistant. Claude Code writes
+// several side-channel record types (last-prompt, permission-mode, …) that
+// echo prompt text and would otherwise produce duplicate hits. Requires rg
+// on PATH.
+func TestRun_FiltersNonConversationTypes(t *testing.T) {
+	if _, err := exec.LookPath("rg"); err != nil {
+		t.Skip("rg not in PATH")
+	}
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "-Users-me-proj")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Mimic a real claude session file: the word "needle" appears once in
+	// a real user turn and then several more times in side-channel records
+	// that should be filtered out.
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"needle first"}}`,
+		`{"type":"last-prompt","lastPrompt":"needle second"}`,
+		`{"type":"permission-mode","mode":"acceptEdits","note":"needle third"}`,
+		`{"type":"ai-title","title":"needle fourth"}`,
+		`{"type":"attachment","body":"needle fifth"}`,
+		`{"type":"assistant","message":{"role":"assistant","content":"needle sixth"}}`,
+		`{"type":"system","content":"needle seventh"}`,
+	}
+	body := strings.Join(lines, "\n") + "\n"
+	if err := os.WriteFile(filepath.Join(dir, "sess.jsonl"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := Run(context.Background(), Options{ProjectsDir: root, Query: "needle"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("match count = %d; want 2 (only user+assistant)", len(got))
+	}
+
+	lineNos := []int{got[0].LineNo, got[1].LineNo}
+	sort.Ints(lineNos)
+	if lineNos[0] != 1 || lineNos[1] != 6 {
+		t.Errorf("kept lines = %v; want [1 6]", lineNos)
+	}
+}
+
+func TestIsConversationTurn(t *testing.T) {
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{`{"type":"user","message":{"role":"user"}}`, true},
+		{`{"type":"assistant","message":{"role":"assistant"}}`, true},
+		{`{"type":"last-prompt","lastPrompt":"x"}`, false},
+		{`{"type":"permission-mode","mode":"default"}`, false},
+		{`{"type":"ai-title"}`, false},
+		{`{"type":"attachment"}`, false},
+		{`{"type":"file-history-snapshot"}`, false},
+		{`{"type":"system"}`, false},
+		{`{"no":"type field"}`, false},
+		{`not json`, false},
+		{``, false},
+	}
+	for _, c := range cases {
+		if got := isConversationTurn(c.line); got != c.want {
+			t.Errorf("isConversationTurn(%q) = %v; want %v", c.line, got, c.want)
+		}
 	}
 }

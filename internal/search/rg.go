@@ -106,16 +106,45 @@ func Run(ctx context.Context, opts Options) ([]Match, error) {
 	if waitErr != nil {
 		var exitErr *exec.ExitError
 		if errors.As(waitErr, &exitErr) && exitErr.ExitCode() == 1 {
-			return matches, nil
+			return filterConversationMatches(matches), nil
 		}
 		// Context cancellation (we triggered it after MaxMatches) is expected.
 		if errors.Is(waitErr, context.Canceled) || ctx.Err() != nil {
-			return matches, nil
+			return filterConversationMatches(matches), nil
 		}
-		return matches, fmt.Errorf("rg: %w", waitErr)
+		return filterConversationMatches(matches), fmt.Errorf("rg: %w", waitErr)
 	}
 
-	return matches, nil
+	return filterConversationMatches(matches), nil
+}
+
+// filterConversationMatches drops matches that aren't in an actual
+// conversation turn. Claude Code writes several side-channel record types
+// into the same .jsonl file (last-prompt, permission-mode, ai-title,
+// attachment, file-history-snapshot, system); those records often echo the
+// user's prompt text and would otherwise surface as duplicate hits for the
+// same logical message. We keep only rows whose JSON "type" is user or
+// assistant. Rows we can't parse as JSON are dropped — every well-formed
+// session line is a JSON object, so a parse failure means the line isn't
+// conversation content anyway.
+func filterConversationMatches(in []Match) []Match {
+	out := in[:0]
+	for _, m := range in {
+		if isConversationTurn(m.Line) {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func isConversationTurn(line string) bool {
+	var hdr struct {
+		Type string `json:"type"`
+	}
+	if err := json.Unmarshal([]byte(line), &hdr); err != nil {
+		return false
+	}
+	return hdr.Type == "user" || hdr.Type == "assistant"
 }
 
 // ------- ndjson parser -------
