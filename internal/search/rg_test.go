@@ -36,6 +36,9 @@ func TestParse_FixtureFile(t *testing.T) {
 	if !strings.Contains(m0.Line, "hello world") {
 		t.Errorf("match[0].Line = %q; want to contain 'hello world'", m0.Line)
 	}
+	if m0.MatchStart != 30 || m0.MatchEnd != 35 {
+		t.Errorf("match[0] offsets = (%d, %d); want (30, 35)", m0.MatchStart, m0.MatchEnd)
+	}
 	if len(m0.Before) != 1 {
 		t.Errorf("match[0].Before len = %d; want 1", len(m0.Before))
 	} else if !strings.Contains(m0.Before[0], "context line before") {

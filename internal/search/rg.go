@@ -17,13 +17,15 @@ import (
 
 // Match is a single line match inside a session file.
 type Match struct {
-	SessionID string    // file basename without .jsonl
-	FilePath  string    // absolute path
-	LineNo    int       // 1-based
-	Line      string    // the matching JSONL line text (may be large)
-	Before    []string  // up to context-size lines before
-	After     []string  // up to context-size lines after
-	SortTime  time.Time // populated by caller from session Meta.UpdatedAt
+	SessionID  string    // file basename without .jsonl
+	FilePath   string    // absolute path
+	LineNo     int       // 1-based
+	Line       string    // the matching JSONL line text (may be large)
+	MatchStart int       // byte offset of the first submatch in Line (rune-aligned)
+	MatchEnd   int       // byte offset of first submatch end in Line (rune-aligned)
+	Before     []string  // up to context-size lines before
+	After      []string  // up to context-size lines after
+	SortTime   time.Time // populated by caller from session Meta.UpdatedAt
 }
 
 // Options controls a Run call.
@@ -280,6 +282,10 @@ func parse(r io.Reader, maxMatches int) ([]Match, error) {
 				LineNo:    d.LineNumber,
 				Line:      strings.TrimRight(d.Lines.Text, "\n"),
 				Before:    before,
+			}
+			if len(d.SubMatches) > 0 {
+				m.MatchStart = d.SubMatches[0].Start
+				m.MatchEnd = d.SubMatches[0].End
 			}
 			out = append(out, m)
 			lastMatchIdx = len(out) - 1

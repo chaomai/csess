@@ -111,17 +111,50 @@ func (ml *MatchList) View() string {
 	return b.String()
 }
 
-// row formats one match as: "3d  02c753f2  L 42  snippet..."
-// The prefix is fixed-width so snippets align across rows.
+// row formats one match as: "3d  02c753f2  …pre<match>post…"
+// The match substring is highlighted. The raw jsonl line number is not
+// shown because the preview pane renders a pretty-printed view where that
+// number is meaningless; Match.LineNo is still used internally by preview
+// to locate and mark the corresponding turn.
 func (ml *MatchList) row(m search.Match) string {
 	tRel := humanDelta(m.SortTime)
 	id := m.SessionID
 	if len(id) > 8 {
 		id = id[:8]
 	}
-	lineTag := fmt.Sprintf("L%d", m.LineNo)
-	snippet := flattenPrompt(m.Line) // reuse flatten logic: strip newlines, collapse ws
-	return fmt.Sprintf("%3s  %-8s  %-5s  %s", tRel, id, lineTag, snippet)
+	return fmt.Sprintf("%3s  %-8s  %s", tRel, id, matchSnippet(m))
+}
+
+// matchSnippetBeforeRunes is how many runes of the raw jsonl line we keep
+// immediately before the match. The remainder of the snippet is the match
+// itself (highlighted) plus whatever follows — right-side truncation is
+// handled by the caller's width budget.
+const matchSnippetBeforeRunes = 20
+
+var matchHighlightStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("3")). // yellow
+	Bold(true)
+
+// matchSnippet builds a one-line excerpt of m.Line centered on the match
+// position reported by rg. Up to matchSnippetBeforeRunes runes precede
+// the match (with an ellipsis if we trimmed); the match itself is wrapped
+// in matchHighlightStyle.
+func matchSnippet(m search.Match) string {
+	line := m.Line
+	start, end := m.MatchStart, m.MatchEnd
+	if start < 0 || end < start || end > len(line) {
+		return flattenPrompt(line)
+	}
+	pre := line[:start]
+	mid := line[start:end]
+	post := line[end:]
+
+	prefix := ""
+	if runes := []rune(pre); len(runes) > matchSnippetBeforeRunes {
+		pre = string(runes[len(runes)-matchSnippetBeforeRunes:])
+		prefix = "…"
+	}
+	return prefix + pre + matchHighlightStyle.Render(mid) + post
 }
 
 func (ml *MatchList) ensureVisible() {
