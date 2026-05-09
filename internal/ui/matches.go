@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -26,6 +27,13 @@ func NewMatchList(width, height int) *MatchList {
 
 func (ml *MatchList) SetItems(items []search.Match) {
 	ml.items = items
+	sort.SliceStable(ml.items, func(i, j int) bool {
+		ti, tj := ml.items[i].SortTime, ml.items[j].SortTime
+		if !ti.Equal(tj) {
+			return ti.After(tj)
+		}
+		return ml.items[i].LineNo < ml.items[j].LineNo
+	})
 	if ml.cursor >= len(ml.items) {
 		ml.cursor = maxInt(0, len(ml.items)-1)
 	}

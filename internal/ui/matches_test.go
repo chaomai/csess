@@ -83,3 +83,46 @@ func TestMatchList_EmptyShowsMessage(t *testing.T) {
 		t.Error("empty list should show 'no matches'")
 	}
 }
+
+// Newest session's matches must rank first, regardless of input order.
+func TestMatchList_SortsByTimeDescending(t *testing.T) {
+	old := time.Unix(100, 0)
+	newer := time.Unix(200, 0)
+	// Inserted oldest-first to prove the sort actually reorders.
+	items := []search.Match{
+		{SessionID: "old-sess", LineNo: 5, SortTime: old},
+		{SessionID: "new-sess", LineNo: 9, SortTime: newer},
+		{SessionID: "old-sess", LineNo: 12, SortTime: old},
+	}
+	ml := NewMatchList(80, 20)
+	ml.SetItems(items)
+
+	got := ml.Items()
+	if got[0].SessionID != "new-sess" {
+		t.Errorf("top row SessionID = %q; want new-sess", got[0].SessionID)
+	}
+	if got[1].SessionID != "old-sess" || got[2].SessionID != "old-sess" {
+		t.Errorf("old-sess rows should follow new-sess; got %q, %q",
+			got[1].SessionID, got[2].SessionID)
+	}
+}
+
+// Matches in the same session (equal SortTime) come out LineNo-ascending.
+func TestMatchList_GroupsSameSessionByLineNo(t *testing.T) {
+	t0 := time.Unix(100, 0)
+	// Inserted descending to prove LineNo ascending is enforced.
+	items := []search.Match{
+		{SessionID: "s", LineNo: 87, SortTime: t0},
+		{SessionID: "s", LineNo: 42, SortTime: t0},
+		{SessionID: "s", LineNo: 12, SortTime: t0},
+	}
+	ml := NewMatchList(80, 20)
+	ml.SetItems(items)
+
+	got := ml.Items()
+	for i, want := range []int{12, 42, 87} {
+		if got[i].LineNo != want {
+			t.Errorf("row %d LineNo = %d; want %d", i, got[i].LineNo, want)
+		}
+	}
+}

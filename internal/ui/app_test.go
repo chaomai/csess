@@ -121,6 +121,46 @@ func TestApp_SearchResultsMsgSwitchesToMatchMode(t *testing.T) {
 	}
 }
 
+// Match rows must be ranked by the parent session's UpdatedAt, newest first,
+// so search results appear in the same order as the main list.
+func TestApp_SearchResultsSortedByMetaTime(t *testing.T) {
+	tOld := time.Unix(1000, 0)
+	tNew := time.Unix(2000, 0)
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	// Scanner pre-sorts newest-first; reproduce that so allIndex stays in sync
+	// with allItems after list.SetItems.
+	app.Update(ScanMsg{Metas: []session.Meta{
+		{ID: "newer", Path: "/fake/newer.jsonl", Enriched: true, UpdatedAt: tNew},
+		{ID: "older", Path: "/fake/older.jsonl", Enriched: true, UpdatedAt: tOld},
+	}})
+
+	m, _ := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	mm := m.(*App)
+
+	// Matches arrive in rg order (older session first); sort must reorder.
+	matches := []search.Match{
+		{SessionID: "older", LineNo: 3},
+		{SessionID: "newer", LineNo: 7},
+	}
+	m, _ = m.Update(searchResultsMsg{query: mm.search.Query(), matches: matches})
+	mm = m.(*App)
+
+	got := mm.matchList.Items()
+	if len(got) != 2 {
+		t.Fatalf("matchList len = %d; want 2", len(got))
+	}
+	if got[0].SessionID != "newer" {
+		t.Errorf("top row = %q; want newer", got[0].SessionID)
+	}
+	if !got[0].SortTime.Equal(tNew) {
+		t.Errorf("newer SortTime = %v; want %v", got[0].SortTime, tNew)
+	}
+	if !got[1].SortTime.Equal(tOld) {
+		t.Errorf("older SortTime = %v; want %v", got[1].SortTime, tOld)
+	}
+}
+
 // TestApp_SearchEnterResumesDirectly verifies that Enter on a match row
 // resumes the parent session immediately (one-stage, no expand).
 func TestApp_SearchEnterResumesDirectly(t *testing.T) {

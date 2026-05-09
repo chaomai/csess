@@ -330,6 +330,9 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.bannerExp = time.Now().Add(5 * time.Second)
 			return a, nil
 		}
+		for i := range m.matches {
+			m.matches[i].SortTime = sortTime(a.metaForMatch(m.matches[i]))
+		}
 		a.searchMatches = m.matches
 		a.matchList.SetItems(m.matches)
 		a.showMatches = true
