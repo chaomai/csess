@@ -129,14 +129,12 @@ func (p *Preview) body() string {
 		turns = turns[cut:]
 	}
 	var b strings.Builder
-	// Render newest turn first so the most recent exchange is visible
-	// without scrolling. Oldest turns appear at the bottom.
-	for i := len(turns) - 1; i >= 0; i-- {
-		b.WriteString(p.renderTurn(turns[i]))
-		b.WriteString("\n")
-	}
 	if cut > 0 {
 		b.WriteString(previewSep.Render(fmt.Sprintf("… %d earlier turns hidden, press 'a' to show all", cut)))
+		b.WriteString("\n")
+	}
+	for _, t := range turns {
+		b.WriteString(p.renderTurn(t))
 		b.WriteString("\n")
 	}
 	return b.String()
@@ -223,7 +221,7 @@ func (p *Preview) SetExpandedMatch(match search.Match, turns []session.Turn) {
 	p.turns = turns
 	p.expanded = true
 
-	// Build the content. Body renders newest-first (reverse order).
+	// Build the content. Body renders oldest-first.
 	var b strings.Builder
 	b.WriteString(p.header())
 	b.WriteString("\n")
@@ -234,19 +232,19 @@ func (p *Preview) SetExpandedMatch(match search.Match, turns []session.Turn) {
 	p.vp.SetContent(b.String())
 
 	// Compute scroll offset: header lines + separator + lines rendered for
-	// turns that appear before the target turn in the reversed sequence.
+	// turns that appear before the target turn.
 	headerLines := strings.Count(p.header(), "\n") + 2 // +1 for the header itself, +1 for sep
 	offset := headerLines
 
-	// Turns render newest-first: turns[n-1], turns[n-2], ..., turns[0].
+	// Turns render oldest-first: turns[0], turns[1], ..., turns[n-1].
 	// We accumulate line counts until we hit the target turn.
 	found := false
-	for i := len(turns) - 1; i >= 0; i-- {
-		if turns[i].LineNo == match.LineNo {
+	for _, t := range turns {
+		if t.LineNo == match.LineNo {
 			found = true
 			break
 		}
-		offset += p.renderedTurnHeight(turns[i])
+		offset += p.renderedTurnHeight(t)
 	}
 	if found {
 		p.vp.SetYOffset(offset)
@@ -264,17 +262,16 @@ func (p *Preview) bodyExpanded(targetLineNo int) string {
 		turns = turns[cut:]
 	}
 	var b strings.Builder
-	for i := len(turns) - 1; i >= 0; i-- {
-		t := turns[i]
+	if cut > 0 {
+		b.WriteString(previewSep.Render(fmt.Sprintf("… %d earlier turns hidden, press 'a' to show all", cut)))
+		b.WriteString("\n")
+	}
+	for _, t := range turns {
 		if t.LineNo == targetLineNo {
 			b.WriteString(p.renderTurnMarked(t))
 		} else {
 			b.WriteString(p.renderTurn(t))
 		}
-		b.WriteString("\n")
-	}
-	if cut > 0 {
-		b.WriteString(previewSep.Render(fmt.Sprintf("… %d earlier turns hidden, press 'a' to show all", cut)))
 		b.WriteString("\n")
 	}
 	return b.String()
