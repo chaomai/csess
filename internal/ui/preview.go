@@ -216,7 +216,8 @@ func fmtTime(t time.Time) string {
 
 // SetExpandedMatch switches the preview to full-transcript mode for the
 // session of match, with a ▶▶▶ marker on the turn whose LineNo matches
-// match.LineNo. The viewport scrolls so that turn is near the top.
+// match.LineNo. The viewport scrolls so that turn sits in the upper third
+// of the pane, with a few earlier turns visible above for context.
 func (p *Preview) SetExpandedMatch(match search.Match, turns []session.Turn) {
 	p.turns = turns
 	p.expanded = true
@@ -247,7 +248,13 @@ func (p *Preview) SetExpandedMatch(match search.Match, turns []session.Turn) {
 		offset += p.renderedTurnHeight(t)
 	}
 	if found {
-		p.vp.SetYOffset(offset)
+		// Pull the scroll target back by a third of the viewport so the
+		// ▶▶▶ line sits in the upper-middle, with context above.
+		scroll := offset - p.vp.Height/3
+		if scroll < 0 {
+			scroll = 0
+		}
+		p.vp.SetYOffset(scroll)
 	} else {
 		p.vp.GotoTop()
 	}
@@ -295,14 +302,15 @@ func (p *Preview) renderTurnMarked(t session.Turn) string {
 	return head + "\n" + body
 }
 
-// renderedTurnHeight estimates how many terminal rows a turn will occupy
-// when rendered at the current pane width. Used for SetExpandedMatch
-// scroll offset calculation.
+// renderedTurnHeight returns the number of split-by-"\n" rows a turn block
+// occupies in the viewport's indexed content. A block is rendered as
+// `head + "\n" + body` followed by a loop-inserted "\n"; the row count for
+// the next block's head equals the \n characters this block contributed,
+// which is `Count(body, "\n") + 2` (1 after head, 1 from the separator).
 func (p *Preview) renderedTurnHeight(t session.Turn) int {
 	body := unescapeLiterals(t.Text)
 	if p.width > 0 {
 		body = ansi.Wordwrap(body, p.width, " ,.-、。，")
 	}
-	// 1 head line + body lines + 1 blank line between turns
-	return strings.Count(body, "\n") + 1 + 1 + 1
+	return strings.Count(body, "\n") + 2
 }
