@@ -137,10 +137,31 @@ func (l *List) Update(msg tea.Msg) (*List, tea.Cmd) {
 			l.cursor = 0
 		case "G", "end":
 			l.cursor = len(l.items) - 1
+		case "ctrl+v":
+			step := pageStep(l.height)
+			l.cursor += step
+			if l.cursor > len(l.items)-1 {
+				l.cursor = len(l.items) - 1
+			}
+		case "alt+v":
+			step := pageStep(l.height)
+			l.cursor -= step
+			if l.cursor < 0 {
+				l.cursor = 0
+			}
 		}
 		l.ensureVisible()
 	}
 	return l, nil
+}
+
+// pageStep returns the cursor step size for C-v / M-v paging. It mirrors
+// emacs's next-screen-context-lines = 2 and degrades to 1 on tiny panes.
+func pageStep(height int) int {
+	if height-2 < 1 {
+		return 1
+	}
+	return height - 2
 }
 
 func (l *List) View() string {

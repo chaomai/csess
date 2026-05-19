@@ -88,3 +88,62 @@ func TestList_CursorScrollsWindow(t *testing.T) {
 		t.Errorf("first item should have scrolled off: %q", v)
 	}
 }
+
+func TestList_CtrlVPagesDown(t *testing.T) {
+	items := make([]session.Meta, 20)
+	for i := range items {
+		items[i] = session.Meta{ID: fmt.Sprintf("s%02d", i), UpdatedAt: time.Unix(int64(100-i), 0), Enriched: true}
+	}
+	m := NewList(80, 10, false) // visible height = 10 → pageStep = 8
+	m.SetItems(items)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if m.Cursor() != 8 {
+		t.Errorf("cursor after ctrl+v = %d; want 8", m.Cursor())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if m.Cursor() != 16 {
+		t.Errorf("cursor after second ctrl+v = %d; want 16", m.Cursor())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if m.Cursor() != 19 {
+		t.Errorf("cursor at bottom should clamp to len-1; got %d, want 19", m.Cursor())
+	}
+}
+
+func TestList_AltVPagesUp(t *testing.T) {
+	items := make([]session.Meta, 20)
+	for i := range items {
+		items[i] = session.Meta{ID: fmt.Sprintf("s%02d", i), UpdatedAt: time.Unix(int64(100-i), 0), Enriched: true}
+	}
+	m := NewList(80, 10, false) // pageStep = 8
+	m.SetItems(items)
+	m.Update(tea.KeyMsg{Type: tea.KeyEnd}) // cursor = 19
+
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if m.Cursor() != 11 {
+		t.Errorf("cursor after alt+v from bottom = %d; want 11", m.Cursor())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if m.Cursor() != 3 {
+		t.Errorf("cursor after second alt+v = %d; want 3", m.Cursor())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if m.Cursor() != 0 {
+		t.Errorf("cursor at top should clamp to 0; got %d", m.Cursor())
+	}
+}
+
+func TestList_PageStepClampsToOneOnTinyPane(t *testing.T) {
+	items := make([]session.Meta, 5)
+	for i := range items {
+		items[i] = session.Meta{ID: fmt.Sprintf("s%d", i), UpdatedAt: time.Unix(int64(100-i), 0), Enriched: true}
+	}
+	m := NewList(80, 1, false) // pageStep = max(1, 1-2) = 1
+	m.SetItems(items)
+
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if m.Cursor() != 1 {
+		t.Errorf("ctrl+v on h=1 should advance by 1; got %d", m.Cursor())
+	}
+}
