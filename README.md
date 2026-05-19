@@ -59,8 +59,25 @@ Useful flags:
 | `/`         | search — full-text via `rg`, or session-id prefix if hex     |
 | `b`         | bookmark / unbookmark the focused session                    |
 | `^K` / `^J` | move focus between bookmarks pane and session list           |
+| `Tab` / `Shift-Tab` | cycle focus between bookmarks pane and session list |
+| `^V` / `M-v` | page down / page up in the focused list                     |
 | `a`         | expand a truncated transcript in the preview                 |
 | `q`         | quit                                                         |
+
+### macOS: Option-as-Meta
+
+`M-v` (page up in the focused list) requires the terminal to send
+`ESC`+`v` for `Option-v`. Defaults vary by terminal:
+
+- **Terminal.app**: Preferences → Profiles → Keyboard → *Use Option as
+  Meta key*.
+- **iTerm2**: Profiles → Keys → set *Left Option key* (and/or *Right
+  Option key*) to *Esc+*.
+- **Ghostty**: works as shipped.
+
+Without this setting, `Option-v` inserts `√` (US layout) and the page-up
+binding will not fire. `PgUp` (= `Fn-↑`) and `k` / `↑` / `^P` keep
+working regardless.
 
 ## Bookmarks
 
