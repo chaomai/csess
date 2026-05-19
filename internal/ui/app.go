@@ -512,7 +512,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "a":
 		a.preview.ToggleExpanded()
 		return a, nil
-	case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G", "home", "end":
+	case "j", "down", "ctrl+n", "k", "up", "ctrl+p", "g", "G", "home", "end", "ctrl+v", "alt+v":
 		if a.focus == focusBookmarks {
 			a.bookmarks.Update(km)
 		} else {

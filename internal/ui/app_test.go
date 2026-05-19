@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -804,5 +805,49 @@ func TestApp_EnterOnRemovedStubBannersAndSkipsResume(t *testing.T) {
 	}
 	if !strings.Contains(app.banner, "session file missing") {
 		t.Errorf("banner = %q; want contains 'session file missing'", app.banner)
+	}
+}
+
+func TestApp_CtrlVPagesListInModeNormal(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	metas := make([]session.Meta, 30)
+	for i := range metas {
+		metas[i] = session.Meta{
+			ID:        fmt.Sprintf("s%02d", i),
+			Path:      fmt.Sprintf("s%02d.jsonl", i),
+			UpdatedAt: time.Unix(int64(1000-i), 0),
+		}
+	}
+	app.Update(ScanMsg{Metas: metas})
+
+	before := app.list.Cursor()
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if app.list.Cursor() == before {
+		t.Errorf("ctrl+v did not advance list cursor (still %d)", app.list.Cursor())
+	}
+	if cmd == nil {
+		t.Error("ctrl+v should schedule LoadTranscript cmd like j does")
+	}
+}
+
+func TestApp_AltVPagesListInModeNormal(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	metas := make([]session.Meta, 30)
+	for i := range metas {
+		metas[i] = session.Meta{
+			ID:        fmt.Sprintf("s%02d", i),
+			Path:      fmt.Sprintf("s%02d.jsonl", i),
+			UpdatedAt: time.Unix(int64(1000-i), 0),
+		}
+	}
+	app.Update(ScanMsg{Metas: metas})
+	app.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	before := app.list.Cursor()
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if app.list.Cursor() >= before {
+		t.Errorf("alt+v did not retreat list cursor (was %d, now %d)", before, app.list.Cursor())
+	}
+	if cmd == nil {
+		t.Error("alt+v should schedule LoadTranscript cmd like k does")
 	}
 }
