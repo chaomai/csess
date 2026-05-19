@@ -857,48 +857,69 @@ func TestApp_AltVPagesListInModeNormal(t *testing.T) {
 // the existing C-n / C-p take.
 func TestApp_CtrlVPagesListInModeSearch(t *testing.T) {
 	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
-	metas := make([]session.Meta, 30)
+	metas := make([]session.Meta, 100)
 	for i := range metas {
 		metas[i] = session.Meta{
-			ID:        fmt.Sprintf("s%02d", i),
-			Path:      fmt.Sprintf("s%02d.jsonl", i),
-			UpdatedAt: time.Unix(int64(1000-i), 0),
+			ID:        fmt.Sprintf("s%03d", i),
+			Path:      fmt.Sprintf("s%03d.jsonl", i),
+			UpdatedAt: time.Unix(int64(10000-i), 0),
 			Enriched:  true,
 		}
 	}
 	app.Update(ScanMsg{Metas: metas})
-	// Enter search mode; matches list stays hidden (no query → no rg run).
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	if app.mode != modeSearch {
 		t.Fatalf("precondition: mode = %v; want modeSearch", app.mode)
 	}
 
 	before := app.list.Cursor()
+	if before != 0 {
+		t.Fatalf("precondition: cursor = %d; want 0", before)
+	}
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
-	if app.list.Cursor() == before {
-		t.Errorf("ctrl+v in search mode did not page list (cursor still %d)", app.list.Cursor())
+	after := app.list.Cursor()
+
+	expected := before + pageStep(app.list.height)
+	if expected > len(app.list.Items())-1 {
+		expected = len(app.list.Items()) - 1
+	}
+	if after != expected {
+		t.Errorf("ctrl+v in search mode: cursor = %d; want %d (pageStep advance from %d)",
+			after, expected, before)
 	}
 }
 
 func TestApp_AltVPagesListInModeSearch(t *testing.T) {
 	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
-	metas := make([]session.Meta, 30)
+	metas := make([]session.Meta, 100)
 	for i := range metas {
 		metas[i] = session.Meta{
-			ID:        fmt.Sprintf("s%02d", i),
-			Path:      fmt.Sprintf("s%02d.jsonl", i),
-			UpdatedAt: time.Unix(int64(1000-i), 0),
+			ID:        fmt.Sprintf("s%03d", i),
+			Path:      fmt.Sprintf("s%03d.jsonl", i),
+			UpdatedAt: time.Unix(int64(10000-i), 0),
 			Enriched:  true,
 		}
 	}
 	app.Update(ScanMsg{Metas: metas})
-	// Move cursor down before entering search so alt+v has somewhere to go.
 	app.Update(tea.KeyMsg{Type: tea.KeyEnd})
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 
 	before := app.list.Cursor()
+	if before != 99 {
+		t.Fatalf("precondition: cursor = %d; want 99 (after End on 100 items)", before)
+	}
 	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
-	if app.list.Cursor() >= before {
-		t.Errorf("alt+v in search mode did not retreat list (was %d, now %d)", before, app.list.Cursor())
+	after := app.list.Cursor()
+
+	// Expected: pageStep retreat from before, clamped to 0.
+	expected := before - pageStep(app.list.height)
+	if expected < 0 {
+		expected = 0
+	}
+	if after != expected {
+		t.Errorf("alt+v in search mode: cursor = %d; want %d (pageStep retreat from %d). "+
+			"If after = 0 here while expected > 0, the alt+v keystroke is leaking to the "+
+			"search input and the filter side-effect is masking the regression.",
+			after, expected, before)
 	}
 }
