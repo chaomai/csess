@@ -661,6 +661,30 @@ func TestApp_BookmarkEnrichMsgReplacesStub(t *testing.T) {
 	}
 }
 
+// TestApp_EnrichMsgUpdatesInScopeBookmark guards against the
+// "(not loaded)" regression where in-scope bookmarks (those also present
+// in the main scan) keep their pre-enrichment Meta because EnrichMsg
+// only updates the list, not the bookmarks pane. seedBookmarks copies
+// the lightweight Quick-scan Meta into the pane; subsequent EnrichMsg
+// for the same id must propagate to the pane too.
+func TestApp_EnrichMsgUpdatesInScopeBookmark(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.bookmarkIDs["a"] = time.Unix(1, 0)
+	// In-scope: id "a" is in the scan, so seedBookmarks copies the
+	// stub Meta (no FirstPrompt) into the bookmarks pane.
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	if got := app.bookmarks.Items(); len(got) != 1 || got[0].FirstPrompt != "" {
+		t.Fatalf("precondition: bookmarks should hold stub Meta for a; got %+v", got)
+	}
+	app.Update(EnrichMsg{Meta: session.Meta{
+		ID: "a", FirstPrompt: "filled in", Enriched: true, CWD: "/proj",
+	}})
+	items := app.bookmarks.Items()
+	if len(items) != 1 || items[0].FirstPrompt != "filled in" {
+		t.Errorf("after enrich: bookmarks[0] = %+v; want FirstPrompt=filled in", items[0])
+	}
+}
+
 func TestApp_DeleteBookmarkedSessionAutoUnbookmarks(t *testing.T) {
 	var savedAfter []session.Bookmark
 	app := NewApp(AppConfig{

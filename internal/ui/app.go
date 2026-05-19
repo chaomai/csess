@@ -212,12 +212,19 @@ func (a *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case EnrichMsg:
 		// O(1) update via index; search operates on allItems so we keep
-		// it in sync too.
+		// it in sync too. The bookmarks pane was seeded from the same
+		// Quick-scan Meta at ScanMsg time (pre-enrichment), so any
+		// in-scope bookmarked id needs the same in-place update — else
+		// the row stays stuck at "(not loaded)".
 		if i, ok := a.allIndex[m.Meta.ID]; ok && i < len(a.allItems) {
 			a.allItems[i] = m.Meta
 		}
 		a.list.ReplaceItem(m.Meta)
+		a.bookmarks.ReplaceItem(m.Meta)
 		if sel, ok := a.list.Selected(); ok && sel.ID == m.Meta.ID {
+			a.preview.UpdateMeta(m.Meta)
+		}
+		if sel, ok := a.bookmarks.Selected(); ok && sel.ID == m.Meta.ID && a.focus == focusBookmarks {
 			a.preview.UpdateMeta(m.Meta)
 		}
 		return a, nil
