@@ -260,3 +260,16 @@ func TestBookmarksPane_AltVPagesUp(t *testing.T) {
 		t.Errorf("cursor at top should clamp to 0; got %d", p.Cursor())
 	}
 }
+
+func TestBookmarksPane_CtrlVOnEmptyPane(t *testing.T) {
+	p := NewBookmarksPane(80, 10)
+	// No items.
+	p.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if p.Cursor() != 0 {
+		t.Errorf("ctrl+v on empty pane = %d; want 0", p.Cursor())
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if p.Cursor() != 0 {
+		t.Errorf("alt+v on empty pane = %d; want 0", p.Cursor())
+	}
+}

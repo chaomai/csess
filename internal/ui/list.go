@@ -274,20 +274,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // ensureVisible adjusts firstVisible so cursor stays within the visible window.
 func (l *List) ensureVisible() {
 	height := l.height

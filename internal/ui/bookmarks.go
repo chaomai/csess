@@ -107,7 +107,7 @@ func (p *BookmarksPane) Update(msg tea.Msg) (*BookmarksPane, tea.Cmd) {
 			p.cursor = maxInt(0, len(p.items)-1)
 		case "ctrl+v":
 			step := pageStep(p.height)
-			p.cursor = minInt(p.cursor+step, maxInt(0, len(p.items)-1))
+			p.cursor = min(p.cursor+step, maxInt(0, len(p.items)-1))
 		case "alt+v":
 			step := pageStep(p.height)
 			p.cursor = maxInt(0, p.cursor-step)
