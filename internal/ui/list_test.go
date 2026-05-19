@@ -147,3 +147,16 @@ func TestList_PageStepClampsToOneOnTinyPane(t *testing.T) {
 		t.Errorf("ctrl+v on h=1 should advance by 1; got %d", m.Cursor())
 	}
 }
+
+func TestList_CtrlVOnEmptyList(t *testing.T) {
+	m := NewList(80, 10, false)
+	// No items.
+	m.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if m.Cursor() != 0 {
+		t.Errorf("ctrl+v on empty list = %d; want 0", m.Cursor())
+	}
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if m.Cursor() != 0 {
+		t.Errorf("alt+v on empty list = %d; want 0", m.Cursor())
+	}
+}

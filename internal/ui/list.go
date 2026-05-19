@@ -139,10 +139,7 @@ func (l *List) Update(msg tea.Msg) (*List, tea.Cmd) {
 			l.cursor = len(l.items) - 1
 		case "ctrl+v":
 			step := pageStep(l.height)
-			l.cursor += step
-			if l.cursor > len(l.items)-1 {
-				l.cursor = len(l.items) - 1
-			}
+			l.cursor = min(l.cursor+step, maxInt(0, len(l.items)-1))
 		case "alt+v":
 			step := pageStep(l.height)
 			l.cursor -= step
