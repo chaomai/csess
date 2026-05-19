@@ -56,7 +56,7 @@ func (ml *MatchList) SetSize(w, h int) {
 	ml.ensureVisible()
 }
 
-// Update handles j/k/↑/↓/ctrl+p/ctrl+n/g/G/home/end navigation.
+// Update handles j/k/↑/↓/ctrl+p/ctrl+n/g/G/home/end/ctrl+v/alt+v navigation.
 func (ml *MatchList) Update(msg tea.Msg) (*MatchList, tea.Cmd) {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		switch km.String() {
@@ -72,6 +72,12 @@ func (ml *MatchList) Update(msg tea.Msg) (*MatchList, tea.Cmd) {
 			ml.cursor = 0
 		case "G", "end":
 			ml.cursor = maxInt(0, len(ml.items)-1)
+		case "ctrl+v":
+			step := pageStep(ml.height)
+			ml.cursor = min(ml.cursor+step, maxInt(0, len(ml.items)-1))
+		case "alt+v":
+			step := pageStep(ml.height)
+			ml.cursor = maxInt(0, ml.cursor-step)
 		}
 		ml.ensureVisible()
 	}

@@ -169,3 +169,65 @@ func TestMatchSnippet(t *testing.T) {
 		t.Errorf("invalid offsets should fall back to raw line: %q", got)
 	}
 }
+
+func TestMatchList_CtrlVPagesDown(t *testing.T) {
+	items := make([]search.Match, 20)
+	for i := range items {
+		items[i] = search.Match{
+			SessionID: "id",
+			LineNo:    i + 1,
+			Line:      fmt.Sprintf("line %d", i+1),
+			SortTime:  time.Unix(int64(1000-i), 0),
+		}
+	}
+	ml := NewMatchList(80, 10) // pageStep = 8
+	ml.SetItems(items)
+
+	ml.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if ml.Cursor() != 8 {
+		t.Errorf("cursor after ctrl+v = %d; want 8", ml.Cursor())
+	}
+	ml.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	ml.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if ml.Cursor() != 19 {
+		t.Errorf("cursor at bottom should clamp to len-1; got %d, want 19", ml.Cursor())
+	}
+}
+
+func TestMatchList_AltVPagesUp(t *testing.T) {
+	items := make([]search.Match, 20)
+	for i := range items {
+		items[i] = search.Match{
+			SessionID: "id",
+			LineNo:    i + 1,
+			Line:      fmt.Sprintf("line %d", i+1),
+			SortTime:  time.Unix(int64(1000-i), 0),
+		}
+	}
+	ml := NewMatchList(80, 10)
+	ml.SetItems(items)
+	ml.Update(tea.KeyMsg{Type: tea.KeyEnd}) // cursor = 19
+
+	ml.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if ml.Cursor() != 11 {
+		t.Errorf("cursor after alt+v = %d; want 11", ml.Cursor())
+	}
+	ml.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	ml.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if ml.Cursor() != 0 {
+		t.Errorf("cursor at top should clamp to 0; got %d", ml.Cursor())
+	}
+}
+
+func TestMatchList_CtrlVOnEmptyList(t *testing.T) {
+	ml := NewMatchList(80, 10)
+	// No items.
+	ml.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if ml.Cursor() != 0 {
+		t.Errorf("ctrl+v on empty match list = %d; want 0", ml.Cursor())
+	}
+	ml.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if ml.Cursor() != 0 {
+		t.Errorf("alt+v on empty match list = %d; want 0", ml.Cursor())
+	}
+}
