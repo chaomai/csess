@@ -917,3 +917,64 @@ func TestApp_AltVPagesListInModeSearch(t *testing.T) {
 			after, expected, before)
 	}
 }
+
+func TestApp_TabFromListMovesFocusToBookmarks(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	if app.focus != focusList {
+		t.Fatalf("precondition: focus = %d; want focusList", app.focus)
+	}
+
+	app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if app.focus != focusBookmarks {
+		t.Errorf("focus after Tab = %d; want focusBookmarks", app.focus)
+	}
+}
+
+func TestApp_TabFromBookmarksMovesFocusToList(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyTab}) // → bookmarks
+	app.Update(tea.KeyMsg{Type: tea.KeyTab}) // → back to list
+	if app.focus != focusList {
+		t.Errorf("focus after second Tab = %d; want focusList", app.focus)
+	}
+}
+
+func TestApp_ShiftTabCyclesLikeTab(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	app.bookmarks.SetItems(
+		[]session.Meta{{ID: "bm1"}},
+		map[string]time.Time{"bm1": time.Unix(1, 0)},
+	)
+	app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if app.focus != focusBookmarks {
+		t.Errorf("focus after Shift-Tab from list = %d; want focusBookmarks", app.focus)
+	}
+	app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if app.focus != focusList {
+		t.Errorf("focus after second Shift-Tab = %d; want focusList", app.focus)
+	}
+}
+
+func TestApp_TabIsNoopWithEmptyBookmarks(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a"}}})
+	// bookmarks pane is empty.
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if app.focus != focusList {
+		t.Errorf("focus after Tab with empty bookmarks = %d; want focusList", app.focus)
+	}
+	if cmd != nil {
+		t.Error("Tab with empty bookmarks should return nil cmd (no preview reload)")
+	}
+}

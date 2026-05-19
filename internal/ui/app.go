@@ -446,6 +446,21 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 		a.applyFocus()
 		a.updatePreviewFromFocus()
 		return a, a.loadTranscriptForFocus()
+	case "tab", "shift+tab":
+		// Cycle focus to the OTHER pane. With two focusable panes, Tab
+		// and Shift-Tab are equivalent; both fall back to the same body
+		// rather than the directional C-j / C-k.
+		if a.focus == focusList {
+			if len(a.bookmarks.Items()) == 0 {
+				return a, nil
+			}
+			a.focus = focusBookmarks
+		} else {
+			a.focus = focusList
+		}
+		a.applyFocus()
+		a.updatePreviewFromFocus()
+		return a, a.loadTranscriptForFocus()
 	case "q", "ctrl+c":
 		return a, tea.Quit
 	case "/":
