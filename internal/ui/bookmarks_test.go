@@ -215,3 +215,48 @@ func TestBookmarksPane_SetFocusedTogglesState(t *testing.T) {
 		t.Error("SetFocused(false) not reflected by Focused()")
 	}
 }
+
+func TestBookmarksPane_CtrlVPagesDown(t *testing.T) {
+	p := NewBookmarksPane(80, 10) // pageStep = 8
+	items := make([]session.Meta, 20)
+	sa := map[string]time.Time{}
+	for i := range items {
+		id := fmt.Sprintf("id%02d", i)
+		items[i] = session.Meta{ID: id}
+		sa[id] = time.Unix(int64(1000-i), 0) // id00 newest
+	}
+	p.SetItems(items, sa)
+
+	p.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if p.Cursor() != 8 {
+		t.Errorf("cursor after ctrl+v = %d; want 8", p.Cursor())
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	p.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if p.Cursor() != 19 {
+		t.Errorf("cursor at bottom should clamp to len-1; got %d, want 19", p.Cursor())
+	}
+}
+
+func TestBookmarksPane_AltVPagesUp(t *testing.T) {
+	p := NewBookmarksPane(80, 10) // pageStep = 8
+	items := make([]session.Meta, 20)
+	sa := map[string]time.Time{}
+	for i := range items {
+		id := fmt.Sprintf("id%02d", i)
+		items[i] = session.Meta{ID: id}
+		sa[id] = time.Unix(int64(1000-i), 0)
+	}
+	p.SetItems(items, sa)
+	p.Update(tea.KeyMsg{Type: tea.KeyEnd}) // cursor = 19
+
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if p.Cursor() != 11 {
+		t.Errorf("cursor after alt+v from bottom = %d; want 11", p.Cursor())
+	}
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	p.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if p.Cursor() != 0 {
+		t.Errorf("cursor at top should clamp to 0; got %d", p.Cursor())
+	}
+}
