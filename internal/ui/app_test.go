@@ -851,3 +851,54 @@ func TestApp_AltVPagesListInModeNormal(t *testing.T) {
 		t.Error("alt+v should schedule LoadTranscript cmd like k does")
 	}
 }
+
+// In search mode with no rg results yet (matches list hidden), C-v / M-v
+// should page the underlying filtered session list — same dispatch path
+// the existing C-n / C-p take.
+func TestApp_CtrlVPagesListInModeSearch(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	metas := make([]session.Meta, 30)
+	for i := range metas {
+		metas[i] = session.Meta{
+			ID:        fmt.Sprintf("s%02d", i),
+			Path:      fmt.Sprintf("s%02d.jsonl", i),
+			UpdatedAt: time.Unix(int64(1000-i), 0),
+			Enriched:  true,
+		}
+	}
+	app.Update(ScanMsg{Metas: metas})
+	// Enter search mode; matches list stays hidden (no query → no rg run).
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if app.mode != modeSearch {
+		t.Fatalf("precondition: mode = %v; want modeSearch", app.mode)
+	}
+
+	before := app.list.Cursor()
+	app.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
+	if app.list.Cursor() == before {
+		t.Errorf("ctrl+v in search mode did not page list (cursor still %d)", app.list.Cursor())
+	}
+}
+
+func TestApp_AltVPagesListInModeSearch(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	metas := make([]session.Meta, 30)
+	for i := range metas {
+		metas[i] = session.Meta{
+			ID:        fmt.Sprintf("s%02d", i),
+			Path:      fmt.Sprintf("s%02d.jsonl", i),
+			UpdatedAt: time.Unix(int64(1000-i), 0),
+			Enriched:  true,
+		}
+	}
+	app.Update(ScanMsg{Metas: metas})
+	// Move cursor down before entering search so alt+v has somewhere to go.
+	app.Update(tea.KeyMsg{Type: tea.KeyEnd})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+
+	before := app.list.Cursor()
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'v'}, Alt: true})
+	if app.list.Cursor() >= before {
+		t.Errorf("alt+v in search mode did not retreat list (was %d, now %d)", before, app.list.Cursor())
+	}
+}

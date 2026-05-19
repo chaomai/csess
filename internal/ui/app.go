@@ -361,7 +361,7 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 			a.updatePreviewFromFocus()
 			return a, a.loadTranscriptForFocus()
 
-		case "up", "down", "ctrl+p", "ctrl+n":
+		case "up", "down", "ctrl+p", "ctrl+n", "ctrl+v", "alt+v":
 			if a.showMatches {
 				a.matchList.Update(km)
 				return a, a.updatePreviewFromMatchSelection()
