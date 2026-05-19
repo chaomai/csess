@@ -879,10 +879,7 @@ func TestApp_CtrlVPagesListInModeSearch(t *testing.T) {
 	app.Update(tea.KeyMsg{Type: tea.KeyCtrlV})
 	after := app.list.Cursor()
 
-	expected := before + pageStep(app.list.height)
-	if expected > len(app.list.Items())-1 {
-		expected = len(app.list.Items()) - 1
-	}
+	expected := min(before+pageStep(app.list.height), len(app.list.Items())-1)
 	if after != expected {
 		t.Errorf("ctrl+v in search mode: cursor = %d; want %d (pageStep advance from %d)",
 			after, expected, before)
@@ -912,10 +909,7 @@ func TestApp_AltVPagesListInModeSearch(t *testing.T) {
 	after := app.list.Cursor()
 
 	// Expected: pageStep retreat from before, clamped to 0.
-	expected := before - pageStep(app.list.height)
-	if expected < 0 {
-		expected = 0
-	}
+	expected := max(before-pageStep(app.list.height), 0)
 	if after != expected {
 		t.Errorf("alt+v in search mode: cursor = %d; want %d (pageStep retreat from %d). "+
 			"If after = 0 here while expected > 0, the alt+v keystroke is leaking to the "+
