@@ -396,6 +396,12 @@ func (a *App) handleKey(km tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return a, a.cfg.ResumeSelected(meta)
 			}
 			return a, nil
+
+		case "tab", "shift+tab":
+			// Cycle-pane keys are absorbed in search mode so they never reach
+			// the search input. Pane focus cycling is a normal-mode-only
+			// concern; in search mode focus is forced to the list anyway.
+			return a, nil
 		}
 
 		// Default: pass keystroke to search input, then trigger debounced search.

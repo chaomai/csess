@@ -978,3 +978,39 @@ func TestApp_TabIsNoopWithEmptyBookmarks(t *testing.T) {
 		t.Error("Tab with empty bookmarks should return nil cmd (no preview reload)")
 	}
 }
+
+// Tab in search mode must NOT reach the search input. The bubbles
+// textinput typically ignores Tab anyway, but an explicit no-op guards
+// against future versions that might bind it to autocomplete.
+func TestApp_TabIsNoopInModeSearch(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true}}})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	// Type a query so we can see whether Tab pollutes it.
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
+	before := app.search.Query()
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyTab})
+	if got := app.search.Query(); got != before {
+		t.Errorf("Tab in search mode changed query: %q -> %q", before, got)
+	}
+	if cmd != nil {
+		t.Errorf("Tab in search mode should be a no-op (nil cmd); got %T", cmd)
+	}
+}
+
+func TestApp_ShiftTabIsNoopInModeSearch(t *testing.T) {
+	app := NewApp(AppConfig{Width: 120, Height: 40, LoadTranscript: stubLoad})
+	app.Update(ScanMsg{Metas: []session.Meta{{ID: "a", Enriched: true}}})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	app.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h', 'i'}})
+	before := app.search.Query()
+
+	_, cmd := app.Update(tea.KeyMsg{Type: tea.KeyShiftTab})
+	if got := app.search.Query(); got != before {
+		t.Errorf("Shift-Tab in search mode changed query: %q -> %q", before, got)
+	}
+	if cmd != nil {
+		t.Errorf("Shift-Tab in search mode should be a no-op; got %T", cmd)
+	}
+}
